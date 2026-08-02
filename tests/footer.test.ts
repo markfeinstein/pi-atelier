@@ -670,6 +670,29 @@ describe("footer", () => {
 		}
 	});
 
+	it("does not animate a plain working label", () => {
+		vi.useFakeTimers();
+		const requestRender = vi.fn();
+		const component = createFooterComponent({
+			getState: () => ({ ...state, activity: "working" }),
+			getConfig: () => DEFAULT_CONFIG,
+			requestRender,
+			onBranchChange: () => vi.fn(),
+			theme: plainTheme,
+		});
+
+		try {
+			expect(component.render(160)[0]).toContain("● WORKING");
+			expect(component.render(160)[0]).not.toContain("WORKING...");
+			expect(vi.getTimerCount()).toBe(0);
+			vi.advanceTimersByTime(400);
+			expect(requestRender).not.toHaveBeenCalled();
+		} finally {
+			component.dispose();
+			vi.useRealTimers();
+		}
+	});
+
 	it("animates only when the full working status is visible and resets after stopping", () => {
 		vi.useFakeTimers();
 		let current: AtelierState = {
@@ -770,7 +793,8 @@ describe("footer", () => {
 		["working", "WORKING"],
 	] as const)("renders %s with the expected fallback label", (activity, expected) => {
 		const line = renderFooterLine({ ...state, activity }, DEFAULT_CONFIG, plainTheme, 160);
-		expect(line).toContain(activity === "working" ? `${expected}...` : expected);
+		expect(line).toContain(expected);
+		if (activity === "working") expect(line).not.toContain(`${expected}...`);
 	});
 
 	it("keeps the longest working phrase within responsive width limits", () => {

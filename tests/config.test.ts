@@ -39,6 +39,7 @@ describe("configuration", () => {
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
 		expect(DEFAULT_CONFIG.showSidebarAgent).toBe(true);
+		expect(DEFAULT_CONFIG.workingLabels).toBeUndefined();
 	});
 
 	it("applies named templates atomically before same-layer deviations", () => {
@@ -204,11 +205,45 @@ describe("configuration", () => {
 		).toBe(true);
 	});
 
-	it("rejects invalid thresholds and validates boolean preferences", () => {
-		const result = validateConfig({ contextWarning: 95, contextDanger: 80, showSidebarToolNames: "yes" });
+	it("normalizes and layers workingLabels, falling back when a list resolves to nothing", async () => {
+		const layered = (...inputs: unknown[]) => mergeConfig(...inputs).config.workingLabels;
+		const custom = validateConfig({ workingLabels: [" THINKING ", "WORKING", "PROCESSING"] });
+		expect(custom.config.workingLabels).toEqual(["THINKING", "WORKING", "PROCESSING"]);
+		expect(custom.warnings).toEqual([]);
+		expect(validateConfig({ workingLabels: false }).config.workingLabels).toBe(false);
+		expect(validateConfig({}).warnings).toEqual([]);
+		expect(layered({ workingLabels: false }, { workingLabels: ["THINKING"] }, {})).toEqual(["THINKING"]);
+		expect(layered({ workingLabels: ["THINKING"] }, { workingLabels: false }, {})).toBe(false);
+		expect(layered({ workingLabels: ["USER"] }, {}, { workingLabels: ["  "] })).toBeUndefined();
+		const empty = validateConfig({ workingLabels: [] });
+		expect(empty.config.workingLabels).toBeUndefined();
+		expect(empty.warnings).toContain("workingLabels must include at least one non-empty string");
+		await writeJson(userPath, { workingLabels: ["USER"] });
+		await writeJson(projectPath, { workingLabels: ["PROJECT"] });
+		const session = { workingLabels: ["SESSION"] };
+		expect(
+			(await loadConfig({ userPath, projectPath, projectTrusted: true, session })).config.workingLabels,
+		).toEqual(["SESSION"]);
+	});
+
+	it("rejects invalid thresholds and validates simple preferences", () => {
+		const result = validateConfig({
+			contextWarning: 95,
+			contextDanger: 80,
+			showSidebarToolNames: "yes",
+			workingLabels: ["", 5, "THINKING"],
+		});
 		expect(result.config.contextWarning).toBe(70);
+		expect(result.config.workingLabels).toEqual(["THINKING"]);
 		expect(result.warnings).toEqual(
-			expect.arrayContaining([expect.stringContaining("threshold"), "showSidebarToolNames must be boolean"]),
+			expect.arrayContaining([
+				expect.stringContaining("threshold"),
+				"showSidebarToolNames must be boolean",
+				"workingLabels entries must be non-empty strings",
+			]),
+		);
+		expect(validateConfig({ workingLabels: "plain" }).warnings).toContain(
+			"workingLabels must be false or an array of strings",
 		);
 	});
 
