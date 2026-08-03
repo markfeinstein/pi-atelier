@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Add a `workingLabels` setting that disables the playful working labels with `false` or replaces them with a custom phrase list, keeping the built-in defaults when omitted.
 - Add a global user Agent-panel visibility preference with persisted settings and independent Agent/TODOS rendering.
 - Add a TODOS sidebar panel for legacy Pi `todo` details and the optional `@juicesharp/rpiv-todo` task format, without installing or requiring that extension.
 - Show task progress and status indicators while keeping TODO state aligned with session initialization and session-tree branch changes.

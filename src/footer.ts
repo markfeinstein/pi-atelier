@@ -115,9 +115,9 @@ function activityText(
 	compact: boolean,
 ): string {
 	const fallback = state.activity.toUpperCase();
-	const label = state.activity === "working" && !compact ? (state.workingLabel ?? fallback) : fallback;
-	const dots =
-		state.activity === "working" && !compact ? workingDots.padEnd(WORKING_DOT_FRAMES[0].length, " ") : "";
+	const showWorkingLabel = state.activity === "working" && !compact && !!state.workingLabel;
+	const label = showWorkingLabel ? state.workingLabel! : fallback;
+	const dots = showWorkingLabel ? workingDots.padEnd(WORKING_DOT_FRAMES[0].length, " ") : "";
 	const role: PaletteRole =
 		state.activity === "ready"
 			? "ready"
@@ -446,7 +446,7 @@ export function createFooterComponent(options: FooterComponentOptions): Componen
 				workingDots,
 				false,
 			);
-			syncAnimation(state.activity === "working" && line.includes(fullActivity));
+			syncAnimation(state.activity === "working" && !!state.workingLabel && line.includes(fullActivity));
 			return [line];
 		},
 		invalidate() {},
