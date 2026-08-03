@@ -1,4 +1,5 @@
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { resolveWorkingLabels } from "./activity.js";
 import {
 	applyDisplayTemplate,
 	derivePresetIdentity,
@@ -93,7 +94,6 @@ const cloneOverride = (value: SessionDisplayOverride | undefined): SessionDispla
 
 const representativeState: FooterState = {
 	activity: "working",
-	workingLabel: "CRAFTING",
 	modelId: "artisan-1",
 	provider: "atelier",
 	thinkingLevel: "high",
@@ -134,6 +134,12 @@ const representativeState: FooterState = {
 	performance: { ttftMs: 680, tokensPerSecond: 54 },
 	extensionStatuses: ["SYNC"],
 };
+
+/** Mirrors `workingLabels` in the preview: no label at all when the setting disables them. */
+function previewWorkingState(config: AtelierConfig): FooterState {
+	const labels = resolveWorkingLabels(config.workingLabels);
+	return labels ? { ...representativeState, workingLabel: labels[0]! } : representativeState;
+}
 
 function fit(text: string, width: number): string {
 	if (width <= 0) return "";
@@ -508,7 +514,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				options.getSidebarPreview?.() ??
 				sidebarDraft.filter((entry) => entry.visible).map((entry) => entry.id);
 			const previewConfig = { ...options.getRenderConfig(), ...cloneDisplay(display) };
-			const previewState = options.getPreviewState?.() ?? representativeState;
+			const previewState = options.getPreviewState?.() ?? previewWorkingState(previewConfig);
 			const previewLine = renderFooterLine(
 				previewState,
 				previewConfig,

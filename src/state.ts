@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { selectWorkingPhrase } from "./activity.js";
+import { resolveWorkingLabels, selectWorkingLabel } from "./activity.js";
 import { resolveDisplayLayers } from "./config.js";
 import { aggregateMetrics, type UsageMessage } from "./metrics.js";
 import type {
@@ -191,15 +191,19 @@ export class AtelierRuntime {
 
 	setConfig(config: AtelierConfig): void {
 		this.#config = config;
+		if (this.#state.activity === "working" && !resolveWorkingLabels(config.workingLabels)) {
+			const { workingLabel: _disabled, ...rest } = this.#state;
+			this.#state = rest;
+		}
 		this.#invalidate();
 	}
 
 	setActivity(activity: ActivityState): void {
 		if (this.#state.activity === activity) return;
-		this.#state =
-			activity === "working"
-				? { ...this.#state, activity, workingLabel: selectWorkingPhrase(this.#random()) }
-				: { ...this.#state, activity };
+		const { workingLabel: _previous, ...rest } = this.#state;
+		const workingLabel =
+			activity === "working" ? selectWorkingLabel(this.#config.workingLabels, this.#random) : undefined;
+		this.#state = workingLabel ? { ...rest, activity, workingLabel } : { ...rest, activity };
 		this.#invalidate();
 	}
 

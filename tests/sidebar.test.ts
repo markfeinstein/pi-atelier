@@ -977,6 +977,13 @@ describe("sidebar snapshot and layout", () => {
 		);
 	});
 
+	it("renders plain working activity when no working label is set", () => {
+		const { workingLabel: _workingLabel, ...plain } = snapshot();
+		const rows = contentRows(renderSidebarLines(plain, DEFAULT_CONFIG, theme, 44, 36, false, 0));
+
+		expect(rows).toContainEqual(expect.stringMatching(/^◆ Working\s+gpt-5\.6-sol$/));
+	});
+
 	it("renders a scan-first Workspace Pulse without repeating the repository root path", () => {
 		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false, 0));
 

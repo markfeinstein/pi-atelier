@@ -128,6 +128,8 @@ export interface AtelierConfig extends DisplaySettings {
 	sidebarPanelLayout: SidebarPanelLayout;
 	completionNotifications: boolean;
 	colorScheme: AtelierColorScheme;
+	/** Omitted uses the built-in playful phrases; `false` disables them; a list overrides them. */
+	workingLabels?: readonly string[] | false;
 }
 
 export interface AtelierMetrics {

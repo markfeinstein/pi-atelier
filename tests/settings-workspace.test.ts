@@ -256,7 +256,7 @@ describe("Display Settings Workspace", () => {
 		const previewStart = lines.findIndex((line) => line.includes(" Preview "));
 		expect(lines.every((line) => visibleWidth(line) <= width)).toBe(true);
 		expect(previewStart).toBeGreaterThan(0);
-		expect(lines[previewStart + 1]).toContain("CRAFTING");
+		expect(lines[previewStart + 1]).toContain("KNEADING");
 		expect(lines[previewStart + 2]).toContain("└");
 		expect(lines.join("\n")).not.toContain("brand        ATELIER");
 	});
@@ -359,6 +359,21 @@ describe("Display Settings Workspace", () => {
 		expect(larger.join("\n")).toContain("› Restore default");
 		expect(larger.join("\n")).not.toContain("↓ more");
 		expect(larger.every((line) => visibleWidth(line) <= 126)).toBe(true);
+	});
+
+	it("mirrors the resolved workingLabels setting in the preview", () => {
+		const visibleLayers: DisplayLayerState = {
+			user: { segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) => ({ ...entry, visible: true })) },
+		};
+		const previewLine = (config: typeof DEFAULT_CONFIG) => {
+			const lines = harness(visibleLayers, config).component.render(120);
+			return lines[lines.findIndex((line) => line.includes(" Preview ")) + 1] ?? "";
+		};
+
+		const plain = previewLine({ ...DEFAULT_CONFIG, workingLabels: false });
+		expect(plain).toContain("WORKING");
+		expect(plain).not.toContain("KNEADING");
+		expect(previewLine({ ...DEFAULT_CONFIG, workingLabels: ["THINKING"] })).toContain("THINKING");
 	});
 
 	it("keeps value, provenance, and action shortcut columns fixed", () => {

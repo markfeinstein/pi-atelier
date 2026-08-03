@@ -440,6 +440,22 @@ function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string
 		if (typeof input[key] === "boolean") config[key] = input[key];
 		else if (key in input) warnings.push(`${key} must be boolean`);
 	}
+	if ("workingLabels" in input) {
+		const value = input.workingLabels;
+		if (value === false) config.workingLabels = false;
+		else if (Array.isArray(value)) {
+			const labels = value
+				.filter((label): label is string => typeof label === "string")
+				.map((label) => label.trim())
+				.filter(Boolean);
+			if (labels.length > 0) config.workingLabels = labels;
+			else {
+				delete config.workingLabels;
+				warnings.push("workingLabels must include at least one non-empty string");
+			}
+			if (labels.length !== value.length) warnings.push("workingLabels entries must be non-empty strings");
+		} else warnings.push("workingLabels must be false or an array of strings");
+	}
 	if ("colorScheme" in input) {
 		const parsed = parseColorScheme(input.colorScheme, warnings);
 		if (parsed !== undefined) config.colorScheme = layerColorScheme(config.colorScheme, parsed);

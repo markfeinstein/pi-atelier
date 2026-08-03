@@ -42,6 +42,7 @@ function createRuntime(
 	execResult = { stdout: "", stderr: "", code: 0, killed: false },
 	random: () => number = Math.random,
 	inspectWorkspace = vi.fn().mockResolvedValue(cleanInspection),
+	config = DEFAULT_CONFIG,
 ) {
 	const requestRender = vi.fn();
 	const exec = vi.fn().mockResolvedValue(execResult);
@@ -54,7 +55,7 @@ function createRuntime(
 	const runtime = new AtelierRuntime({
 		pi: { exec } as never,
 		ctx: ctx as never,
-		config: DEFAULT_CONFIG,
+		config,
 		autoCompact: true,
 		random,
 		requestRender,
@@ -186,7 +187,7 @@ describe("AtelierRuntime", () => {
 		expect(inspectWorkspace).toHaveBeenCalledOnce();
 	});
 
-	it("selects one stable label when a work cycle starts", () => {
+	it("selects one stable playful label when a work cycle starts", () => {
 		const random = vi.fn().mockReturnValue(0.5);
 		const { runtime, requestRender } = createRuntime(undefined, random);
 		requestRender.mockClear();
@@ -200,6 +201,44 @@ describe("AtelierRuntime", () => {
 		expect(runtime.getState()).toMatchObject({ activity: "working", workingLabel: "PONDERING" });
 		expect(random).toHaveBeenCalledOnce();
 		expect(requestRender).toHaveBeenCalledTimes(2);
+	});
+
+	it.each([
+		["disables", false as const, 0.5, undefined, 0],
+		["overrides", ["THINKING", "WORKING", "PROCESSING"], 0.75, "PROCESSING", 1],
+	])("%s working labels from the workingLabels setting", (_case, workingLabels, value, expected, calls) => {
+		const random = vi.fn().mockReturnValue(value);
+		const { runtime } = createRuntime(undefined, random, undefined, { ...DEFAULT_CONFIG, workingLabels });
+
+		runtime.setActivity("working");
+
+		expect(runtime.getState()).toMatchObject({ activity: "working" });
+		expect(runtime.getState().workingLabel).toBe(expected);
+		expect(random).toHaveBeenCalledTimes(calls);
+	});
+
+	it("drops the working label when a mid-cycle configuration disables labels", () => {
+		const random = vi.fn().mockReturnValue(0);
+		const { runtime } = createRuntime(undefined, random);
+		runtime.setActivity("working");
+		expect(runtime.getState().workingLabel).toBe("KNEADING");
+
+		runtime.setConfig({ ...DEFAULT_CONFIG, workingLabels: false });
+
+		expect(runtime.getState()).toMatchObject({ activity: "working" });
+		expect(runtime.getState().workingLabel).toBeUndefined();
+		expect(random).toHaveBeenCalledOnce();
+	});
+
+	it("keeps the selected label stable when a mid-cycle configuration still allows labels", () => {
+		const random = vi.fn().mockReturnValue(0);
+		const { runtime } = createRuntime(undefined, random);
+		runtime.setActivity("working");
+
+		runtime.setConfig({ ...DEFAULT_CONFIG, workingLabels: ["THINKING"] });
+
+		expect(runtime.getState().workingLabel).toBe("KNEADING");
+		expect(random).toHaveBeenCalledOnce();
 	});
 
 	it("recomputes Session Display patches from retained lower layers with provenance", () => {
@@ -279,6 +318,7 @@ describe("AtelierRuntime", () => {
 		runtime.setActivity("working");
 		expect(runtime.getState().workingLabel).toBe("KNEADING");
 		runtime.setActivity("ready");
+		expect(runtime.getState().workingLabel).toBeUndefined();
 		runtime.setActivity("working");
 		runtime.setConfig({ ...DEFAULT_CONFIG, preset: "minimal" });
 

@@ -95,7 +95,7 @@ See [CONTRIBUTING.md](https://github.com/michaelmjhhhh/pi-atelier/blob/main/CONT
 - `(auto)` automatic context compaction
 - `*` tracked working-tree changes
 
-`READY` remains fixed when idle. During each work cycle, the working label is selected once from a playful built-in phrase set—such as `KNEADING`, `MOONWALKING`, or `PONDERING`—and remains stable until the cycle ends. When the full activity label fits, its ellipsis shrinks from `...` to `..` to `.` every 400 ms. The ellipsis reserves its maximum width so the model and following workspace text remain stationary. Narrower terminals use the compact, static `WORKING` label.
+`READY` remains fixed when idle. During each work cycle, the working label is selected once and remains stable until the cycle ends. By default, Atelier uses a playful built-in phrase set—such as `KNEADING`, `MOONWALKING`, or `PONDERING`; set `workingLabels` to `false` for a static `WORKING` label, or to a list of your own phrases to replace the built-in set. When the full activity label fits, its ellipsis shrinks from `...` to `..` to `.` every 400 ms. The ellipsis reserves its maximum width so the model and following workspace text remain stationary. Narrower terminals use the compact, static `WORKING` label.
 
 ## Menu
 
@@ -270,6 +270,18 @@ Product defaults are layered with **User default**, trusted **Project override**
 Legacy `segments`, `ornament`, and `showExtensionStatuses` keys remain load-compatible and are translated into a complete normalized layout. A usable `segmentLayout` is authoritative over those keys in the same layer. Legacy omitted segments remain present but hidden; legacy Brand and Statuses combinations retain their prior visible result. Brand and Statuses have no overlapping runtime gates: normalized `segmentLayout` is the sole visibility source. New configuration should use `segmentLayout`.
 
 During streaming, TPS is prefixed with `~` while it is estimated, then replaced with final throughput when the response ends. Each value is dimmed to `~` until it is measured. Visibility toggles retain an entry's position, and reordering includes hidden entries.
+
+`workingLabels` controls the working-state label. Omit it to keep Atelier's built-in playful phrases, set it to `false` for a static `WORKING` in the footer and `Working` in the sidebar with no ellipsis animation, or set it to a non-empty array to select randomly from your own phrases:
+
+```json
+{ "workingLabels": false }
+```
+
+```json
+{ "workingLabels": ["THINKING", "WORKING", "PROCESSING"] }
+```
+
+Entries are trimmed, and blank or non-string entries are dropped with a warning. A list that leaves no usable entry warns and falls back to the built-in phrases. Like other layered keys, a trusted project or session value replaces the user value rather than merging with it.
 
 `showSidebarAgent` controls whether the Agent panel renders inside the sidebar. It is a global user-only compatibility input; trusted project and session values are ignored. When set to `false`, the sidebar still shows but omits the agent state and model metadata section while leaving Activity, TODOS, Context, Workspace, Usage, and Tools unaffected. Use **Settings → Display** to edit the ordered Sidebar layout.
 
