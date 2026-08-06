@@ -1,6 +1,6 @@
 # Issue tracker: GitHub
 
-Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all operations.
+Issues and PRDs for this divergent integration line live in GitHub issues on `markfeinstein/pi-atelier`. Use the `gh` CLI for all operations and pass `--repo markfeinstein/pi-atelier` or set `GH_REPO=markfeinstein/pi-atelier` so commands do not accidentally target upstream.
 
 ## Conventions
 
@@ -11,7 +11,11 @@ Issues and PRDs for this repo live as GitHub issues. Use the `gh` CLI for all op
 - **Apply / remove labels**: `gh issue edit <number> --add-label "..."` / `--remove-label "..."`
 - **Close**: `gh issue close <number> --comment "..."`
 
-Infer the repo from `git remote -v` — `gh` does this automatically when run inside a clone.
+Do not infer the repo from remotes in this checkout: the repository may have both `origin` and `upstream`, and this workspace is often managed through `jj`. Prefer an explicit repo target:
+
+```bash
+export GH_REPO=markfeinstein/pi-atelier
+```
 
 ## Pull requests as a triage surface
 

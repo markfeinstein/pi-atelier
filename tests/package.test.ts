@@ -24,11 +24,15 @@ const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url),
 
 describe("npm package contract", () => {
 	it("publishes a Pi extension with compatible peers", () => {
-		expect(pkg.name).toBe("pi-atelier");
-		expect(pkg.version).toBe("0.7.2");
+		expect(pkg.name).toBe("@markfeinstein/pi-atelier");
+		expect(pkg.version).toBe("0.8.0-integration.0");
 		expect(pkg.description).toBe("A responsive status rail and live activity sidebar for Pi");
 		expect(pkg.keywords).toContain("pi-package");
 		expect(pkg.pi.extensions).toEqual(["./extensions/index.ts"]);
+		expect(pkg.repository.url).toBe("git+https://github.com/markfeinstein/pi-atelier.git");
+		expect(pkg.bugs.url).toBe("https://github.com/markfeinstein/pi-atelier/issues");
+		expect(pkg.homepage).toBe("https://github.com/markfeinstein/pi-atelier/tree/integration#readme");
+		expect(pkg.publishConfig).toEqual({ access: "public", tag: "integration" });
 		expect(pkg.peerDependencies["@earendil-works/pi-coding-agent"]).toBe(">=0.80.7");
 		expect(pkg.peerDependencies["@earendil-works/pi-tui"]).toBe(">=0.80.7");
 		expect(pkg.engines.node).toBe(">=22.19.0");

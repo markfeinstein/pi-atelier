@@ -1,6 +1,6 @@
 {
-	"name": "pi-atelier",
-	"version": "0.7.2",
+	"name": "@markfeinstein/pi-atelier",
+	"version": "0.8.0-integration.0",
 	"description": "A responsive status rail and live activity sidebar for Pi",
 	"type": "module",
 	"license": "MIT",
@@ -23,16 +23,16 @@
 		"extensions": [
 			"./extensions/index.ts"
 		],
-		"image": "https://raw.githubusercontent.com/michaelmjhhhh/pi-atelier/main/assets/preview.png"
+		"image": "https://raw.githubusercontent.com/markfeinstein/pi-atelier/integration/assets/preview.png"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/michaelmjhhhh/pi-atelier.git"
+		"url": "git+https://github.com/markfeinstein/pi-atelier.git"
 	},
 	"bugs": {
-		"url": "https://github.com/michaelmjhhhh/pi-atelier/issues"
+		"url": "https://github.com/markfeinstein/pi-atelier/issues"
 	},
-	"homepage": "https://github.com/michaelmjhhhh/pi-atelier#readme",
+	"homepage": "https://github.com/markfeinstein/pi-atelier/tree/integration#readme",
 	"scripts": {
 		"test": "vitest run",
 		"test:watch": "vitest",
@@ -57,5 +57,9 @@
 	},
 	"engines": {
 		"node": ">=22.19.0"
+	},
+	"publishConfig": {
+		"access": "public",
+		"tag": "integration"
 	}
 }
