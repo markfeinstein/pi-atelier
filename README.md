@@ -107,7 +107,7 @@ Open Pi Atelier with:
 
 The default shortcut is `alt+a`. Both entry points open the partitioned **Atelier Control Center**:
 
-- **Settings** — the Display Settings Workspace, completion notifications, and sidebar tool-list expansion
+- **Settings** — the Display Settings Workspace, global Sidebar startup preference, completion notifications, and sidebar tool-list expansion
 - **Controls** — session-scoped Sidebar visibility, model/thinking selection, and active tools
 - **Actions** — session details, rename, and safe compaction
 
@@ -128,7 +128,7 @@ Additional commands:
 
 ## Sidebar
 
-The sidebar starts shown whenever the extension initializes. An explicit `off` applies only to the current runtime; `/reload` restores the default shown state. Use these commands to control it explicitly:
+The sidebar starts shown by default whenever the extension initializes. Use **Settings → Sidebar on startup** to change this global user preference; it is saved immediately and applies from the next session or reload. An explicit `on` or `off` still applies only to the current runtime. Use these commands to control it explicitly:
 
 ```text
 /atelier sidebar       # toggle between shown and hidden
@@ -162,11 +162,11 @@ Use `/atelier` or `alt+a` to disable or re-enable completion notifications. The 
 
 The Activity panel always reserves fixed rows for the run summary and response performance. Before a value is available it displays `TTFT ~ · TPS ~`, so those metrics never shift position or disappear as requests start or terminal height changes. During an agent run, the sidebar also adds information the compact footer intentionally omits: current one-based turn, elapsed run time, active parallel tool calls, the three most recent tool results, per-tool durations, and total done/failed tool counts. TTFT runs from provider request dispatch to the first generated response content. During streaming, TPS updates from Pi's conservative output-token estimate and carries a `~` marker; after the response ends, final output usage replaces the estimate and removes the marker. The footer remains a stable one-line status rail; it shows response-performance metrics only when the opt-in `performance` segment is enabled and otherwise omits them.
 
-The sidebar uses a non-overlapping split presentation: Pi's workspace reflows into the columns to the left of the rail instead of rendering underneath it. It starts at 44 columns, can be resized between 28 and 72 columns, always preserves at least 64 columns for Pi, and auto-hides below 92 terminal columns.
+The sidebar uses Pi's supported non-capturing overlay seam while reserving its columns in both Pi 0.84 renderer modes. Regular mode uses a bounded compatibility adapter that resolves the renderer implementation from the concrete `TuiMainScreen` prototype rather than capturing Pi's dynamic Proxy method. Fullscreen wraps Pi's existing layout root in an `HStack`, preserving the viewport on the left and reserving the Sidebar width on the right without replacing `render`. Unsupported renderers safely fall back to the overlay without modifying layout. The sidebar starts at 44 columns, can be resized between 28 and 72 columns, and auto-hides below 92 terminal columns.
 
-Press `Ctrl+Shift+R` to enter temporary Resize mode. The Pi workspace and sidebar resize together continuously. Drag from the divider or either adjacent column and release to accept; clicks elsewhere leave Resize mode active. Use Left/Right for one-column adjustments, Shift+Left/Shift+Right for four-column adjustments, Enter to accept, or Escape to restore the previous width. Mouse reporting is active only during Resize mode, so ordinary terminal text selection is unchanged at all other times.
+Press `Ctrl+Shift+R` to enter temporary Resize mode. Drag from the sidebar divider or either adjacent column and release to accept; clicks elsewhere leave Resize mode active. Use Left/Right for one-column adjustments, Shift+Left/Shift+Right for four-column adjustments, Enter to accept, or Escape to restore the previous width. Mouse reporting is active only during Resize mode, so ordinary terminal text selection is unchanged at all other times.
 
-The split is implemented entirely inside Pi Atelier by wrapping the active TUI renderer at runtime; no Pi files are modified. This is a version-sensitive integration with Pi's current TUI structure and may require compatibility updates when Pi changes its renderer internals. A terminal character divider cannot display Ghostty's native hover resize cursor.
+Pi 0.84 cannot switch between regular and fullscreen renderers while any overlay is open. Hide the sidebar with `/atelier sidebar off`, switch TUI mode, then show it again with `/atelier sidebar on`. Atelier restores the non-overlapping split after the renderer switch.
 
 The TODOS panel accepts both legacy Pi `todo` details (`todos` items with `done` booleans) and `@juicesharp/rpiv-todo` task details (`tasks` items with `pending`, `in_progress`, or `completed` states). The `@juicesharp/rpiv-todo` extension is optional and must be installed separately; Pi Atelier neither installs nor requires it. The panel shows `done/total` progress, status indicators (`✓` completed, `◐` in progress, `○` pending), and task IDs.
 
@@ -186,7 +186,7 @@ Trusted project configuration:
 <project>/.pi/pi-atelier.json
 ```
 
-Project settings override user settings only after Pi trusts the project. Session-scoped JSON configuration can be supplied by appending the latest `pi-atelier:config` custom session entry, for example `pi.appendEntry("pi-atelier:config", { "colorScheme": "inherit" })` from an extension or SDK session setup. Most menu changes apply to the current session; **Save as user default** writes display configuration atomically. Sidebar tool details and completion notifications are saved immediately so those preferences survive future sessions. Agent visibility and completion notifications are global user preferences, so project and session configuration cannot override them. Pi Atelier never modifies project configuration from the menu.
+Project settings override user settings only after Pi trusts the project. Session-scoped JSON configuration can be supplied by appending the latest `pi-atelier:config` custom session entry, for example `pi.appendEntry("pi-atelier:config", { "colorScheme": "inherit" })` from an extension or SDK session setup. Most menu changes apply to the current session; **Save as user default** writes display configuration atomically. Sidebar startup visibility, Sidebar tool details, and completion notifications are saved immediately so those preferences survive future sessions. Sidebar startup visibility, Agent visibility, and completion notifications are global user preferences, so project and session configuration cannot override them. Pi Atelier never modifies project configuration from the menu.
 
 Complete example:
 
@@ -212,6 +212,7 @@ Complete example:
   "showSessionActions": true,
   "showSidebarToolNames": false,
   "showSidebarAgent": true,
+  "showSidebarOnStartup": true,
   "sidebarPanelLayout": [
     { "id": "agent", "visible": true },
     { "id": "activity", "visible": true },
@@ -282,6 +283,8 @@ During streaming, TPS is prefixed with `~` while it is estimated, then replaced 
 ```
 
 Entries are trimmed, and blank or non-string entries are dropped with a warning. A list that leaves no usable entry warns and falls back to the built-in phrases. Like other layered keys, a trusted project or session value replaces the user value rather than merging with it.
+
+`showSidebarOnStartup` (default `true`) controls whether a new session opens the Sidebar automatically. It is a global user-only preference; trusted project and session values are ignored. Change it from **Settings → Sidebar on startup**. The `/atelier sidebar on|off` commands remain available for the current runtime regardless of this preference.
 
 `showSidebarAgent` controls whether the Agent panel renders inside the sidebar. It is a global user-only compatibility input; trusted project and session values are ignored. When set to `false`, the sidebar still shows but omits the agent state and model metadata section while leaving Activity, TODOS, Context, Workspace, Usage, and Tools unaffected. Use **Settings → Display** to edit the ordered Sidebar layout.
 

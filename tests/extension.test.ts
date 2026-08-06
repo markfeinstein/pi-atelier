@@ -403,6 +403,19 @@ describe("extension registration", () => {
 		expect(h.setFooter).not.toHaveBeenCalled();
 	});
 
+	it("starts with the Sidebar hidden when the global preference is off", async () => {
+		await withPersistedUserConfig({ showSidebarOnStartup: false }, async () => {
+			const h = harness();
+
+			await start(h);
+
+			expect(h.overlays).toHaveLength(0);
+			expect(h.setFooter).toHaveBeenCalledOnce();
+			await command(h, "sidebar on");
+			expect(h.overlays).toHaveLength(1);
+		});
+	});
+
 	it("retires active TUI state when a non-TUI session starts", async () => {
 		const h = harness("tui", "darwin");
 		await start(h);
@@ -533,13 +546,13 @@ describe("extension registration", () => {
 		expect(h.saveConfigPatch).not.toHaveBeenCalled();
 	});
 
-	it("reflows the Pi workspace beside the visible sidebar", async () => {
+	it("keeps Pi rendering untouched beneath the visible sidebar", async () => {
 		const h = harness();
 		await start(h);
 		await command(h, "sidebar on");
 
 		expect(h.overlays[0]?.options.overlayOptions()).toMatchObject({ width: 44 });
-		expect(h.overlays[0]?.tui.render(120)).toEqual(["main:76"]);
+		expect(h.overlays[0]?.tui.render(120)).toEqual(["main:120"]);
 
 		await command(h, "sidebar off");
 		expect(h.overlays[0]?.tui.render(120)).toEqual(["main:120"]);
