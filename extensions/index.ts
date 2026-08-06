@@ -717,7 +717,7 @@ export default function atelierExtension(
 			}
 			if (enabled && isFresh() && activeSession === nextSession) {
 				installFooter(nextSession);
-				nextSession.sidebar.show();
+				if (loaded.config.showSidebarOnStartup) nextSession.sidebar.show();
 			}
 			void candidateRuntime.refreshWorkspacePulse();
 		} catch (error) {

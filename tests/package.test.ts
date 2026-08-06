@@ -25,7 +25,7 @@ const pkg = JSON.parse(readFileSync(new URL("../package.json", import.meta.url),
 describe("npm package contract", () => {
 	it("publishes a Pi extension with compatible peers", () => {
 		expect(pkg.name).toBe("pi-atelier");
-		expect(pkg.version).toBe("0.7.0");
+		expect(pkg.version).toBe("0.7.2");
 		expect(pkg.description).toBe("A responsive status rail and live activity sidebar for Pi");
 		expect(pkg.keywords).toContain("pi-package");
 		expect(pkg.pi.extensions).toEqual(["./extensions/index.ts"]);
@@ -35,12 +35,15 @@ describe("npm package contract", () => {
 		expect(pkg.files).toEqual(expect.arrayContaining(["extensions", "src", "README.md", "LICENSE"]));
 	});
 
-	it("documents the split sidebar Resize interaction", async () => {
+	it("documents the split sidebar Resize interaction and safe fallback", async () => {
 		const readme = await readFile(new URL("../README.md", import.meta.url), "utf8");
 		expect(readme).toContain("Ctrl+Shift+R");
 		expect(readme).toContain("28");
 		expect(readme).toContain("72");
-		expect(readme).toContain("version-sensitive");
+		expect(readme).toContain("non-capturing overlay");
+		expect(readme).toContain("bounded compatibility adapter");
+		expect(readme).toContain("Fullscreen wraps Pi's existing layout root in an `HStack`");
+		expect(readme).toContain("Unsupported renderers safely fall back");
 	});
 
 	it("publishes the Sidebar layout and contribution contract", async () => {
