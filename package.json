@@ -1,6 +1,6 @@
 {
 	"name": "@markfeinstein/pi-atelier",
-	"version": "0.8.0-integration.0",
+	"version": "0.8.0",
 	"description": "A responsive status rail and live activity sidebar for Pi",
 	"type": "module",
 	"license": "MIT",
@@ -59,7 +59,6 @@
 		"node": ">=22.19.0"
 	},
 	"publishConfig": {
-		"access": "public",
-		"tag": "integration"
+		"access": "public"
 	}
 }
