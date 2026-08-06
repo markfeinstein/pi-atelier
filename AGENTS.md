@@ -16,4 +16,4 @@ Domain documentation uses a single-context layout. See `docs/agents/domain.md`.
 
 ## npm publishing
 
-This branch publishes as `@markfeinstein/pi-atelier` from the divergent `integration` line. Follow `docs/release.md`; routine releases use `npm publish --access public --tag integration`. The maintainer completes npm browser authentication manually in their terminal. Do not request, accept, or pass an OTP through the agent. After the maintainer reports success, verify the published version and the `integration` dist-tag before pushing the release commit and Git tag. Verify or change `latest` only when the maintainer explicitly promotes an integration release.
+This branch publishes as the normal `@markfeinstein/pi-atelier` package line. Follow `docs/release.md`; routine releases use `npm publish --access public`. The maintainer completes npm browser authentication manually in their terminal. Do not request, accept, or pass an OTP through the agent. After the maintainer reports success, verify the published version and `latest` dist-tag before pushing the release commit and Git tag.

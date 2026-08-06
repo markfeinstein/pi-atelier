@@ -58,7 +58,7 @@ Pi Atelier defaults to its fixed dark Midnight Spectrum. Selecting a light, dark
 ## Install
 
 ```bash
-pi install npm:@markfeinstein/pi-atelier@integration
+pi install npm:@markfeinstein/pi-atelier
 ```
 
 Try a checkout without installing it permanently:
@@ -336,7 +336,7 @@ Pi Atelier intentionally does not install terminal UI in print, JSON, or RPC mod
 
 Contributors must not publish packages, change release versions, create tags or releases, change npm dist-tags, or edit npm publishing credentials. Maintainers own release verification, merging, releases, and publishing for `@markfeinstein/pi-atelier`.
 
-See [Release checklist](docs/release.md) for the integration-line publishing flow. Routine releases use the `integration` dist-tag unless a maintainer intentionally promotes a release to `latest`.
+See [Release checklist](docs/release.md) for the publishing flow. Routine releases publish the scoped package as the default npm line.
 
 ## License
 

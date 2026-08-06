@@ -1,12 +1,12 @@
 # Release checklist
 
-Maintainers own releases for the divergent integration line. Contributors and agents must not publish packages, change release versions, create tags or releases, change npm dist-tags, or edit npm publishing credentials unless a maintainer explicitly asks for that release work.
+Maintainers own releases for the divergent scoped package line. Contributors and agents must not publish packages, change release versions, create tags or releases, change npm dist-tags, or edit npm publishing credentials unless a maintainer explicitly asks for that release work.
 
 Package identity:
 
 - npm package: `@markfeinstein/pi-atelier`
 - canonical branch: `integration`
-- routine npm dist-tag: `integration`
+- routine npm dist-tag: `latest`
 - GitHub repository: `markfeinstein/pi-atelier`
 
 ## Preflight
@@ -29,16 +29,16 @@ npm pack --dry-run --json
 
 The maintainer completes any npm browser authentication manually in their terminal. Agents must not request, accept, print, or pass an OTP.
 
-Routine integration-line publish:
+Routine publish:
 
 ```bash
-npm publish --access public --tag integration
+npm publish --access public
 ```
 
-Use `latest` only when the maintainer explicitly decides that this divergent line should become the default install target:
+`latest` is the normal dist-tag for this permanently divergent scoped package. Use another dist-tag only for an intentional prerelease or experiment:
 
 ```bash
-npm dist-tag add @markfeinstein/pi-atelier@<version> latest
+npm publish --access public --tag next
 ```
 
 ## Verify
@@ -50,14 +50,14 @@ npm view @markfeinstein/pi-atelier@<version> name version repository dist-tags
 npm view @markfeinstein/pi-atelier dist-tags
 ```
 
-Confirm that the `integration` dist-tag points to the new version. Confirm `latest` only if it was intentionally changed.
+Confirm that the `latest` dist-tag points to the new version unless the release intentionally used another dist-tag.
 
 ## Tag and release
 
 After npm verification succeeds:
 
 1. Commit or describe the release change.
-2. Create a tag named `integration-v<version>`.
+2. Create a tag named `v<version>`.
 3. Push the release commit and tag.
 4. Create a GitHub Release for the tag when release notes or large demo artifacts are useful.
 

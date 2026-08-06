@@ -9,7 +9,7 @@ There is no single fork point after which all changes are downstream-only. Treat
 - Canonical repository: `markfeinstein/pi-atelier`
 - Canonical branch: `integration`
 - Public package identity: `@markfeinstein/pi-atelier`
-- npm dist-tag for routine divergent releases: `integration`
+- routine npm dist-tag: `latest`
 
 The upstream project remains useful for source reading and selective contribution, but contributors and agents must not rebase this line onto upstream `main` or assume upstream `main` is the review base.
 
@@ -51,4 +51,4 @@ If a change is intended for upstream too, keep that work small and document the 
 
 ## Issues and releases
 
-Issues for this line belong in `markfeinstein/pi-atelier` unless a maintainer explicitly says to file upstream. Routine releases publish the scoped package with the `integration` dist-tag; `latest` should be changed only as an intentional maintainer decision.
+Issues for this line belong in `markfeinstein/pi-atelier` unless a maintainer explicitly says to file upstream. Routine releases publish the scoped package as its normal `latest` line; alternate dist-tags are reserved for intentional prereleases or experiments.
