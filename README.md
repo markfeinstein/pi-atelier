@@ -2,15 +2,17 @@
 
 A responsive status rail and live activity sidebar for [Pi](https://pi.dev).
 
+This repository's `integration` branch is a permanent divergent line of Pi Atelier. It may include a mix of upstreamed, upstream-candidate, fork-only, and local-maintenance changes; see [Divergence policy](docs/divergence-policy.md) for branch stewardship rules.
+
 Pi Atelier replaces Pi's default footer with a calm Status Rail and adds an optional docked sidebar for live agent, turn, tool, context, session, and project information.
 
 Wide terminals use two stable zones: agent state and workspace identity stay left, while readable telemetry is right-aligned. By default the extension uses its fixed dark Midnight Spectrum—blue input/context, purple output/menu, cyan cache, amber cost/working, and red danger—while configuration can switch Atelier to Pi theme inheritance or custom role colors.
 
 ## Demo
 
-[![Pi Atelier demo showing the full live activity sidebar and status rail footer](https://raw.githubusercontent.com/michaelmjhhhh/pi-atelier/main/docs/demo.png)](https://github.com/michaelmjhhhh/pi-atelier/releases/download/v0.3.0/demo.mp4)
+![Pi Atelier demo showing the full live activity sidebar and status rail footer](assets/preview.png)
 
-[Watch the full-quality 74-second demo](https://github.com/michaelmjhhhh/pi-atelier/releases/download/v0.3.0/demo.mp4) — the large video is hosted as a GitHub Release asset so it does not bloat Git clones or the npm package.
+Full-quality demo recordings can be attached to integration-line GitHub Releases without bloating Git clones or the npm package.
 
 ### Interface details
 
@@ -20,8 +22,8 @@ Wide terminals use two stable zones: agent state and workspace identity stay lef
     <th width="28%">Live Activity Sidebar</th>
   </tr>
   <tr>
-    <td valign="top"><img src="https://raw.githubusercontent.com/michaelmjhhhh/pi-atelier/main/assets/status-rail.png" alt="Pi Atelier status rail and menu shortcut"></td>
-    <td valign="top"><img src="https://raw.githubusercontent.com/michaelmjhhhh/pi-atelier/main/assets/preview.png" alt="Pi Atelier live activity sidebar"></td>
+    <td valign="top"><img src="assets/status-rail.png" alt="Pi Atelier status rail and menu shortcut"></td>
+    <td valign="top"><img src="assets/preview.png" alt="Pi Atelier live activity sidebar"></td>
   </tr>
 </table>
 
@@ -29,7 +31,7 @@ Wide terminals use two stable zones: agent state and workspace identity stay lef
 
 Pi Atelier defaults to its fixed dark Midnight Spectrum. Selecting a light, dark, or custom Pi theme does not change the Status Rail or sidebar colors unless `colorScheme` is configured. Set `colorScheme` to `"inherit"` to use Pi's active theme tokens, or provide a custom role map to override individual Atelier palette roles. With `NO_COLOR`, the Status Rail and sidebar emit no custom RGB and use theme-native neutral and semantic roles.
 
-![Animated Pi Atelier color scheme comparison showing the default Midnight Spectrum, inherited Pi Dark colors, and a custom role map](docs/color-schemes.gif)
+![Animated Pi Atelier color scheme comparison showing the default Midnight Spectrum, inherited Pi Dark colors, and a custom role map](assets/color-schemes.gif)
 
 ## Features
 
@@ -56,7 +58,7 @@ Pi Atelier defaults to its fixed dark Midnight Spectrum. Selecting a light, dark
 ## Install
 
 ```bash
-pi install npm:pi-atelier
+pi install npm:@markfeinstein/pi-atelier@integration
 ```
 
 Try a checkout without installing it permanently:
@@ -70,7 +72,7 @@ Pi packages execute with your full system permissions. Review third-party source
 ## Local development
 
 ```bash
-git clone https://github.com/michaelmjhhhh/pi-atelier.git
+git clone --branch integration https://github.com/markfeinstein/pi-atelier.git
 cd pi-atelier
 npm install
 npm run check
@@ -79,7 +81,7 @@ npx --no-install pi -e .
 
 ## Contributing
 
-See [CONTRIBUTING.md](https://github.com/michaelmjhhhh/pi-atelier/blob/main/CONTRIBUTING.md) for setup, validation, and pull request expectations.
+See [CONTRIBUTING.md](CONTRIBUTING.md) for setup, validation, and pull request expectations for the divergent integration line.
 
 ## Footer anatomy
 
@@ -332,17 +334,9 @@ Pi Atelier intentionally does not install terminal UI in print, JSON, or RPC mod
 
 ## Maintainer-only publishing
 
-Contributors must not publish packages, change release versions, create tags or releases, or edit npm publishing credentials. Maintainers own release verification, merging, releases, and publishing.
+Contributors must not publish packages, change release versions, create tags or releases, change npm dist-tags, or edit npm publishing credentials. Maintainers own release verification, merging, releases, and publishing for `@markfeinstein/pi-atelier`.
 
-Release verification must include:
-
-```bash
-npm run check
-npm pack --dry-run
-npm pack
-```
-
-Inspect the tarball before running `npm publish`.
+See [Release checklist](docs/release.md) for the integration-line publishing flow. Routine releases use the `integration` dist-tag unless a maintainer intentionally promotes a release to `latest`.
 
 ## License
 

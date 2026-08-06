@@ -1,7 +1,10 @@
 # Changelog
 
+This changelog tracks the divergent `integration` line. Changes may be upstreamed, upstream-candidate, fork-only, or local maintenance; there is no single permanent fork point.
+
 ## Unreleased
 
+- Local maintenance: declare the permanent divergent integration-line policy, scoped package identity, release flow, contribution base, CI gate, and private `.plans/` handling.
 - Add a global **Sidebar on startup** setting that is saved to user configuration while preserving session-scoped Sidebar on/off controls.
 
 ## 0.7.2 — 2026-08-06

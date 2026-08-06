@@ -1,0 +1,25 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: integration
+    open-pull-requests-limit: 5
+    groups:
+      pi-runtime:
+        patterns:
+          - "@earendil-works/pi-*"
+      test-tooling:
+        patterns:
+          - "@biomejs/biome"
+          - typescript
+          - vitest
+          - "@types/node"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    target-branch: integration
+    open-pull-requests-limit: 5
