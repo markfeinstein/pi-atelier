@@ -21,7 +21,6 @@ export type BuiltinSidebarPanelId =
 	| "activity"
 	| "alerts"
 	| "todos"
-	| "context"
 	| "workspace"
 	| "usage"
 	| "tools";
@@ -200,9 +199,8 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 		{ id: "activity", visible: true },
 		{ id: "alerts", visible: true },
 		{ id: "todos", visible: true },
-		{ id: "context", visible: true },
-		{ id: "workspace", visible: true },
 		{ id: "usage", visible: true },
+		{ id: "workspace", visible: true },
 		{ id: "tools", visible: true },
 	],
 	completionNotifications: true,
