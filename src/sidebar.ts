@@ -12,6 +12,7 @@ import {
 	type RunActivitySnapshot,
 	type ToolActivity,
 } from "./run-activity.js";
+import type { SubagentActivityItem, SubagentActivitySnapshot } from "./subagent-activity.js";
 import {
 	BUILTIN_SIDEBAR_PANEL_IDS,
 	isSidebarPanelContributionId,
@@ -74,6 +75,7 @@ export interface SidebarSnapshotInput {
 	activeToolNames?: readonly string[];
 	extensionStatuses: readonly string[];
 	runActivity?: RunActivitySnapshot;
+	subagents?: SubagentActivitySnapshot;
 	todos?: readonly NormalizedTodo[];
 	sidebarPanels?: readonly SidebarPanelData[];
 }
@@ -89,6 +91,7 @@ export interface SidebarSnapshot extends AtelierState {
 	availableToolCount: number;
 	activeToolNames: readonly string[];
 	runActivity: RunActivitySnapshot;
+	subagents: SubagentActivitySnapshot;
 	todos: readonly NormalizedTodo[];
 	sidebarPanels?: readonly SidebarPanelData[];
 }
@@ -115,6 +118,7 @@ export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapsh
 		),
 		extensionStatuses: input.extensionStatuses,
 		runActivity: input.runActivity ?? EMPTY_RUN_ACTIVITY,
+		subagents: input.subagents ?? EMPTY_SUBAGENT_ACTIVITY,
 		todos: input.todos ?? [],
 		sidebarPanels: input.sidebarPanels ?? [],
 	};
@@ -687,6 +691,7 @@ function panelIdForTitle(title: string): string | undefined {
 	return {
 		AGENT: "agent",
 		ACTIVITY: "activity",
+		SUBAGENTS: "subagents",
 		ALERTS: "alerts",
 		TODOS: "todos",
 		WORKSPACE: "workspace",
@@ -792,6 +797,109 @@ function aggregateActivityText(activity: RunActivitySnapshot): string {
 	const failed = finiteCount(activity.failedCount);
 	if (completed === 0 && failed === 0) return "";
 	return `tools ${completed} done · ${failed} failed`;
+}
+
+const EMPTY_SUBAGENT_ACTIVITY: SubagentActivitySnapshot = Object.freeze({
+	active: Object.freeze([]),
+	recent: Object.freeze([]),
+});
+
+function subagentStatusRole(status: SubagentActivityItem["status"]): PaletteRole {
+	if (status === "failed" || status === "rejected" || status === "stopped") return "error";
+	if (status === "paused") return "warning";
+	if (status === "running" || status === "queued" || status === "pending") return "working";
+	return "ready";
+}
+
+function subagentStatusSymbol(status: SubagentActivityItem["status"]): string {
+	if (status === "failed" || status === "rejected" || status === "stopped") return "✕";
+	if (status === "paused") return "Ⅱ";
+	if (status === "queued" || status === "pending") return "◦";
+	if (status === "running") return "◆";
+	return "✓";
+}
+
+function subagentStatusLabel(status: SubagentActivityItem["status"]): string {
+	if (status === "complete") return "done";
+	return status;
+}
+
+function subagentName(item: SubagentActivityItem): string {
+	return (
+		sanitize(item.agent ?? (item.agents.length > 0 ? item.agents.join("+") : (item.label ?? item.id))) ||
+		"subagent"
+	);
+}
+
+function subagentRuntime(item: SubagentActivityItem, now: number): string {
+	if (item.durationMs !== undefined) return formatDuration(item.durationMs);
+	const end = item.endedAt ?? now;
+	return formatDuration(Math.max(0, end - item.startedAt));
+}
+
+function subagentRow(
+	item: SubagentActivityItem,
+	contentWidth: number,
+	palette: AtelierPalette,
+	now: number,
+): string {
+	const role = subagentStatusRole(item.status);
+	const name = palette.paint(item.status === "complete" ? "muted" : "primary", subagentName(item));
+	const left = `${palette.paint(role, subagentStatusSymbol(item.status))} ${name}`;
+	const right = palette.paint(role, `${subagentStatusLabel(item.status)} ${subagentRuntime(item, now)}`);
+	return spacedRow(left, right, contentWidth);
+}
+
+function subagentDetailRow(
+	item: SubagentActivityItem,
+	contentWidth: number,
+	palette: AtelierPalette,
+	now: number,
+): string | undefined {
+	const currentTool = sanitize(item.currentTool ?? "");
+	const label = sanitize(item.label ?? "");
+	const stats = [
+		item.turnCount !== undefined ? `⟳ ${finiteCount(item.turnCount)}` : "",
+		item.toolCount !== undefined ? `tools ${finiteCount(item.toolCount)}` : "",
+	].filter(Boolean);
+	const toolRuntime =
+		item.currentToolStartedAt !== undefined
+			? ` ${formatDuration(Math.max(0, now - item.currentToolStartedAt))}`
+			: "";
+	const detail = currentTool ? `${currentTool}${toolRuntime}` : stats.length > 0 ? stats.join(" · ") : label;
+	if (!detail) return undefined;
+	return truncateToWidth(palette.paint("dim", `⎿ ${detail}`), contentWidth, "");
+}
+
+function subagentSidebarGroups(
+	snapshot: SidebarSnapshot,
+	contentWidth: number,
+	palette: AtelierPalette,
+	now: number,
+): SidebarGroup[] {
+	const rows: SidebarGroup[] = [];
+	for (const [index, item] of snapshot.subagents.active.entries()) {
+		const detail = subagentDetailRow(item, contentWidth, palette, now);
+		rows.push({
+			name: `subagentActive:${item.id}`,
+			panel: "SUBAGENTS",
+			panelRole: subagentStatusRole(item.status),
+			rows: [subagentRow(item, contentWidth, palette, now), ...(detail ? [detail] : [])],
+			required: false,
+			dropRank: 65 + (snapshot.subagents.active.length - index) / 100,
+		});
+	}
+	for (const [index, item] of snapshot.subagents.recent.slice(0, 4).entries()) {
+		rows.push({
+			name: `subagentRecent:${item.id}`,
+			panel: "SUBAGENTS",
+			panelRole: subagentStatusRole(item.status),
+			rows: [subagentRow(item, contentWidth, palette, now)],
+			required: false,
+			dropRank: 18 + (4 - index) / 100,
+		});
+	}
+	return rows;
 }
 
 function activitySidebarGroups(
@@ -920,6 +1028,7 @@ export function renderSidebarLines(
 			required: group.name === "activityCore",
 			dropRank: group.name === "activityCore" ? Number.POSITIVE_INFINITY : group.dropRank + 40,
 		})),
+		...subagentSidebarGroups(snapshot, panelContentWidth, palette, now),
 		{
 			name: "statusDetails",
 			panel: "ALERTS",

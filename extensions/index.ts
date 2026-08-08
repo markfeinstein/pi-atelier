@@ -24,6 +24,13 @@ import {
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
 import type { SidebarPanelSetting } from "../src/settings-workspace.js";
 import {
+	createSubagentActivityTracker,
+	SUBAGENT_ASYNC_COMPLETE_EVENT,
+	SUBAGENT_ASYNC_STARTED_EVENT,
+	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
+	type SubagentActivityTracker,
+} from "../src/subagent-activity.js";
+import {
 	buildSidebarSnapshot,
 	createSidebarController,
 	type SidebarController,
@@ -102,6 +109,7 @@ interface ActiveSession {
 	readonly sidebar: SidebarController;
 	readonly panelRegistry: SidebarPanelRegistry;
 	readonly runActivity: RunActivityTracker;
+	readonly subagentActivity: SubagentActivityTracker;
 	readonly completionNotifier: CompletionNotifier;
 	unsubscribeAskUserBlocked: (() => void) | undefined;
 	askUserBlocked: boolean;
@@ -251,6 +259,7 @@ export default function atelierExtension(
 			activeToolNames: activeTools,
 			extensionStatuses: targetSession.extensionStatuses,
 			runActivity: runActivity.getSnapshot(),
+			subagents: targetSession.subagentActivity.getSnapshot(),
 			todos: targetSession.todos,
 			sidebarPanels: panelRegistry.getAvailable(),
 		});
@@ -273,6 +282,38 @@ export default function atelierExtension(
 		return current && contextUsesSessionManager(ctx, current.sessionManager) ? current : undefined;
 	}
 
+	const getCurrentSessionId = (ctx: ExtensionContext): string | undefined => {
+		try {
+			const maybeSessionManager = ctx.sessionManager as ExtensionContext["sessionManager"] & {
+				getSessionId?: () => string;
+			};
+			return maybeSessionManager.getSessionId?.();
+		} catch {
+			return undefined;
+		}
+	};
+
+	const routeSubagentActivityEvent = (
+		handler: (tracker: SubagentActivityTracker, data: unknown) => void,
+		data: unknown,
+	): void => {
+		const current = activeSession;
+		if (!current) return;
+		handler(current.subagentActivity, data);
+	};
+	const unsubscribeSubagentActivityEvents = [
+		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (data) =>
+			routeSubagentActivityEvent((tracker, event) => tracker.handleAsyncStarted(event), data),
+		),
+		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) =>
+			routeSubagentActivityEvent((tracker, event) => tracker.handleAsyncComplete(event), data),
+		),
+		pi.events.on(SUBAGENT_FOREGROUND_COMPLETE_EVENT, (data) =>
+			routeSubagentActivityEvent((tracker, event) => tracker.handleForegroundComplete(event), data),
+		),
+	];
+	void unsubscribeSubagentActivityEvents;
+
 	/**
 	 * Retirement is decided by session identity, so a retired session's own fields are never read
 	 * again; only the resources it owns outside this module need releasing.
@@ -287,6 +328,7 @@ export default function atelierExtension(
 		session.panelRegistry.dispose();
 		session.runtime.dispose();
 		session.runActivity.reset();
+		session.subagentActivity.dispose();
 		session.completionNotifier.reset();
 		const unsubscribe = session.unsubscribeAskUserBlocked;
 		session.unsubscribeAskUserBlocked = undefined;
@@ -553,6 +595,7 @@ export default function atelierExtension(
 		let localSidebar: SidebarController | undefined;
 		let localPanelRegistry: SidebarPanelRegistry | undefined;
 		let localCompletionNotifier: CompletionNotifier | undefined;
+		let localSubagentActivity: SubagentActivityTracker | undefined;
 		let candidateSession: ActiveSession | undefined;
 		let publishedSession: ActiveSession | undefined;
 		const isFresh = (): boolean => initializationToken === lifecycleToken;
@@ -600,6 +643,11 @@ export default function atelierExtension(
 				instanceId: `atelier-${initializationToken.id}`,
 				onChange: requestCandidateRenders,
 			});
+			const currentSessionId = getCurrentSessionId(initializationContext);
+			localSubagentActivity = createSubagentActivityTracker({
+				...(currentSessionId === undefined ? {} : { currentSessionId }),
+				onChange: requestCandidateRenders,
+			});
 			const candidateCompletionNotifier = createCompletionNotifier({
 				isEnabled: () =>
 					enabled &&
@@ -625,7 +673,7 @@ export default function atelierExtension(
 				shouldAnimate: () =>
 					candidateSession !== undefined &&
 					activeSession === candidateSession &&
-					localRunActivity.isRunning(),
+					(localRunActivity.isRunning() || localSubagentActivity?.hasActive() === true),
 				onWarning: (message) => initializationContext.ui.notify(message, "warning"),
 				onError: (error) =>
 					initializationContext.ui.notify(
@@ -637,6 +685,7 @@ export default function atelierExtension(
 				localSidebar.dispose();
 				localPanelRegistry?.dispose();
 				localRunActivity.reset();
+				localSubagentActivity?.dispose();
 				candidateCompletionNotifier.reset();
 				candidateRuntime.dispose();
 				return;
@@ -649,6 +698,7 @@ export default function atelierExtension(
 				sidebar: localSidebar,
 				panelRegistry: localPanelRegistry,
 				runActivity: localRunActivity,
+				subagentActivity: localSubagentActivity,
 				completionNotifier: candidateCompletionNotifier,
 				unsubscribeAskUserBlocked: undefined,
 				askUserBlocked: false,
@@ -728,6 +778,7 @@ export default function atelierExtension(
 					localSidebar?.dispose();
 					localPanelRegistry?.dispose();
 					localRunActivity.reset();
+					localSubagentActivity?.dispose();
 					localCompletionNotifier?.reset();
 					localRuntime?.dispose();
 				}
@@ -779,12 +830,16 @@ export default function atelierExtension(
 		getActiveSession(ctx)?.runActivity.finishResponse(event.message.usage.output);
 	});
 	pi.on("tool_execution_start", (event, ctx) => {
-		getActiveSession(ctx)?.runActivity.startTool(event);
+		const current = getActiveSession(ctx);
+		if (!current) return;
+		current.runActivity.startTool(event);
+		current.subagentActivity.startForegroundTool(event);
 	});
 	pi.on("tool_execution_end", (event, ctx) => {
 		const current = getActiveSession(ctx);
 		if (!current) return;
 		current.runActivity.finishTool(event);
+		current.subagentActivity.finishForegroundTool(event);
 		current.runtime.scheduleWorkspacePulseRefresh();
 	});
 	// Collapse todo tool output when sidebar shows todos

@@ -303,8 +303,18 @@ describe("extension registration", () => {
 			{
 				sidebarPanelLayout: [
 					{ id: "vendor:queue", visible: true },
-					...Array.from({ length: 8 }, (_, index) => ({
-						id: ["agent", "activity", "alerts", "todos", "context", "workspace", "usage", "tools"][index],
+					...Array.from({ length: 9 }, (_, index) => ({
+						id: [
+							"agent",
+							"activity",
+							"subagents",
+							"alerts",
+							"todos",
+							"context",
+							"workspace",
+							"usage",
+							"tools",
+						][index],
 						visible: false,
 					})),
 				],
@@ -1002,7 +1012,7 @@ describe("extension registration", () => {
 				expect(rendered).toContain("vendor:missing");
 
 				// Two display rows, nine segments, and three actions precede configured panels.
-				for (let index = 0; index < 14 + 8; index += 1) workspace?.handleInput("\u001b[B");
+				for (let index = 0; index < 14 + 9; index += 1) workspace?.handleInput("\u001b[B");
 				const focusedRendered = workspace?.render(120).join("\n") ?? "";
 				expect(focusedRendered).toContain("Queue title");
 				expect(focusedRendered).toContain("unavailable");
@@ -1022,6 +1032,7 @@ describe("extension registration", () => {
 					"vendor:missing",
 					"agent",
 					"activity",
+					"subagents",
 					"alerts",
 					"todos",
 					"usage",
@@ -1181,6 +1192,47 @@ describe("extension registration", () => {
 		h.pi.events.emit("rpiv:ask-user:blocked", { active: false });
 		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
 		expect(h.spawnNotificationProcess).toHaveBeenCalledTimes(1);
+	});
+
+	it("renders subagent event state and recent completion in the sidebar", async () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(20_000);
+		try {
+			const h = harness();
+			await start(h);
+			await command(h, "sidebar on");
+			const renderCount = h.overlays[0]?.requestRender.mock.calls.length ?? 0;
+
+			h.pi.events.emit("subagent:async-started", {
+				id: "async-1",
+				agent: "worker",
+				goal: "Build widget",
+				startedAt: 1_000,
+			});
+
+			expect(h.overlays[0]?.requestRender.mock.calls.length).toBeGreaterThan(renderCount);
+			let sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+			expect(sidebarText).toContain("Subagents");
+			expect(sidebarText).toContain("worker");
+			expect(sidebarText).toContain("queued 19s");
+
+			vi.setSystemTime(22_000);
+			h.pi.events.emit("subagent:async-complete", {
+				id: "async-1",
+				runId: "async-1",
+				agent: "worker",
+				success: true,
+				timestamp: 21_000,
+			});
+
+			sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+			expect(sidebarText).toContain("Subagents");
+			expect(sidebarText).toContain("worker");
+			expect(sidebarText).toContain("done 20s");
+			expect(sidebarText).not.toContain("queued 21s");
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it("forwards run and turn events into sidebar activity without putting tool history in the footer", async () => {

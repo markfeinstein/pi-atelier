@@ -1578,6 +1578,66 @@ describe("sidebar snapshot and layout", () => {
 		expect(idleWithCounts).toContain("tools 0 done · 2 failed");
 	});
 
+	it("renders active and recently completed subagents with state and runtime", () => {
+		const rows = contentRows(
+			renderSidebarLines(
+				{
+					...snapshot(),
+					subagents: {
+						active: [
+							{
+								id: "run-1:0",
+								source: "async",
+								status: "running",
+								agent: "worker",
+								agents: ["worker"],
+								startedAt: 1_000,
+								currentTool: "bash",
+								currentToolStartedAt: 2_000,
+								turnCount: 2,
+								toolCount: 4,
+							},
+						],
+						recent: [
+							{
+								id: "run-2:0",
+								source: "async",
+								status: "complete",
+								agent: "reviewer",
+								agents: ["reviewer"],
+								startedAt: 10_000,
+								endedAt: 14_000,
+								durationMs: 4_000,
+							},
+							{
+								id: "run-3:0",
+								source: "foreground",
+								status: "failed",
+								agent: "scout",
+								agents: ["scout"],
+								startedAt: 12_000,
+								endedAt: 15_000,
+								durationMs: 3_000,
+							},
+						],
+					},
+				},
+				DEFAULT_CONFIG,
+				theme,
+				44,
+				50,
+				false,
+				20_000,
+			),
+		);
+
+		expect(rows).toContain("Subagents");
+		expect(rows).toContainEqual(expect.stringMatching(/^◆ worker\s+running 19s$/));
+		expect(rows).toContain("⎿ bash 18s");
+		expect(rows).toContainEqual(expect.stringMatching(/^✓ reviewer\s+done 4s$/));
+		expect(rows).toContainEqual(expect.stringMatching(/^✕ scout\s+failed 3s$/));
+	});
+
 	it("keeps active tools before recent tools and preserves parallel start order", () => {
 		const rows = contentRows(
 			renderSidebarLines(
