@@ -133,7 +133,7 @@ function activeActivity(): RunActivitySnapshot {
 function contentRows(lines: string[]) {
 	return lines.map((line) => {
 		const row = stripAnsi(line).slice(2).trimEnd();
-		const title = row.match(/^╭─ [✦✧] ([A-Z]+) ─*╮$/)?.[1];
+		const title = row.match(/^╭─ [✦✧] (.*?) ─*╮$/u)?.[1];
 		if (title) return title;
 		if (/^╰─+╯$/.test(row)) return "";
 		if (row.startsWith("│ ") && row.endsWith(" │")) return row.slice(2, -2).trimEnd();
@@ -186,9 +186,9 @@ describe("sidebar snapshot and layout", () => {
 			36,
 		);
 		const text = contentRows(lines).join("\n");
-		expect(text.indexOf("QUEUE")).toBeGreaterThanOrEqual(0);
-		expect(text.indexOf("QUEUE")).toBeLessThan(text.indexOf("TOOLS"));
-		expect(text).not.toContain("AGENT");
+		expect(text.indexOf("Queue")).toBeGreaterThanOrEqual(0);
+		expect(text.indexOf("Queue")).toBeLessThan(text.indexOf("Tools"));
+		expect(text).not.toContain("Agent");
 	});
 
 	it("supports load-order discovery, updates, and removal through the public event seam", () => {
@@ -940,7 +940,7 @@ describe("sidebar snapshot and layout", () => {
 			false,
 			0,
 		).join("\n");
-		expect(rendered).toContain("UNSAFE TITLE");
+		expect(rendered).toContain("Unsafe Title");
 		expect(rendered).toContain("row value");
 		expect(rendered).not.toContain("[31m");
 		expect(rendered).not.toContain("[33m");
@@ -965,12 +965,12 @@ describe("sidebar snapshot and layout", () => {
 		expect(lines).toHaveLength(36);
 		expect(lines.every((line) => visibleWidth(line) <= 44)).toBe(true);
 		expect(lines.every((line) => stripAnsi(line).startsWith("│ "))).toBe(true);
-		expect(text).toContain("╭─ ✦ AGENT ");
-		expect(text).toContain("╭─ ✦ CONTEXT ");
+		expect(text).toContain("╭─ ✦ Agent ");
+		expect(text).toContain("╭─ ✦ Usage ");
 		expect(text).toContain("╰────────────────");
 		expect(text).not.toContain("ATELIER");
 		expect(text).not.toMatch(/PI ATELIER|ATELIER|▛▀▜/);
-		expect(contentRows(lines)[0]).toBe("AGENT");
+		expect(contentRows(lines)[0]).toBe("Agent");
 		expect(contentRows(lines)).toContain("pi-atelier · feature/sidebar ▲");
 		expect(contentRows(lines)).toContainEqual(
 			expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/),
@@ -1073,7 +1073,7 @@ describe("sidebar snapshot and layout", () => {
 	it("drops Session and optional Pulse detail before the Workspace identity and core summary", () => {
 		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 20, false, 0));
 
-		expect(rows).toContain("WORKSPACE");
+		expect(rows).toContain("Workspace");
 		expect(rows).toContain("pi-atelier · feature/sidebar ▲");
 		expect(rows).toContain("5 tracked  +182  −47");
 		expect(rows).not.toContain("2 untracked");
@@ -1084,10 +1084,10 @@ describe("sidebar snapshot and layout", () => {
 	it("pulses only the working Agent jewel while keeping other crowns stable", () => {
 		const bright = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false, 0).join("\n");
 		const soft = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false, 400).join("\n");
-		expect(bright).toContain("╭─ ✦ AGENT ");
-		expect(soft).toContain("╭─ ✧ AGENT ");
-		expect(bright).toContain("╭─ ✦ CONTEXT ");
-		expect(soft).toContain("╭─ ✦ CONTEXT ");
+		expect(bright).toContain("╭─ ✦ Agent ");
+		expect(soft).toContain("╭─ ✧ Agent ");
+		expect(bright).toContain("╭─ ✦ Usage ");
+		expect(soft).toContain("╭─ ✦ Usage ");
 	});
 
 	it("tints panel crowns with their semantic jewel roles", () => {
@@ -1134,36 +1134,36 @@ describe("sidebar snapshot and layout", () => {
 			contentRows(renderSidebarLines(noSession, DEFAULT_CONFIG, theme, 44, 36, false)),
 		).toMatchInlineSnapshot(`
 			[
-			  "AGENT",
+			  "Agent",
 			  "◆ Working · gitifying      gpt-5.6-sol",
-			  "OPENAI-CODEX · MEDIUM · SUBSCRIPTION",
+			  "OpenAI-Codex · Medium · Subscription",
 			  "",
 			  "",
-			  "ACTIVITY",
+			  "Activity",
 			  "Ready",
 			  "TTFT ~ · TPS ~",
 			  "",
 			  "",
-			  "CONTEXT",
-			  "32k / 400k                        8.1%",
-			  "[■·········]",
+			  "Usage",
+			  "Context 32k / 400k [■·········]   8.1%",
+			  "In 50.0k  Out 1.9k",
+			  "Cache 100.0k  Hit 96.0%",
+			  "Cost $0.479",
 			  "",
 			  "",
-			  "WORKSPACE",
+			  "Workspace",
 			  "pi-atelier · feature/sidebar ▲",
 			  "5 tracked  +182  −47",
 			  "2 untracked",
 			  "6 entries · ephemeral",
 			  "",
 			  "",
-			  "USAGE",
-			  "In 50.0k  Out 1.9k",
-			  "Cache 100.0k  Hit 96.0%",
-			  "Cost $0.479",
-			  "",
-			  "",
-			  "TOOLS",
+			  "Tools",
 			  "8 / 12 active                        ▸",
+			  "",
+			  "",
+			  "",
+			  "",
 			  "",
 			  "",
 			  "",
@@ -1178,9 +1178,9 @@ describe("sidebar snapshot and layout", () => {
 		for (const width of [32, 40, 44]) {
 			const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 36, false));
 			expect(rows.join("\n")).not.toContain("ATELIER");
-			expect(rows.join("\n")).toContain("WORKSPACE");
-			expect(rows.join("\n")).toContain("CONTEXT");
-			expect(rows).toContain("TOOLS");
+			expect(rows.join("\n")).toContain("Workspace");
+			expect(rows.join("\n")).toContain("Usage");
+			expect(rows).toContain("Tools");
 			expect(rows.every((row) => !row.startsWith("STATUS "))).toBe(true);
 			expect(
 				renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 36, false).every(
@@ -1195,11 +1195,11 @@ describe("sidebar snapshot and layout", () => {
 		const compact = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, 28, 36, false));
 		expect(compact).toContain("◆ Working · gitifying");
 		expect(compact).toContain("gpt-5.6-sol");
-		expect(compact).toContain("OPENAI-CODEX");
-		expect(compact).toContain("MEDIUM · SUBSCRIPTION");
-		const compactContext = compact.indexOf("CONTEXT");
-		expect(compact[compactContext + 1]).toMatch(/^32k \/ 400k\s+8\.1%$/);
-		expect(compact[compactContext + 2]).toMatch(/^\[■·+\]$/);
+		expect(compact).toContain("OpenAI-Codex");
+		expect(compact).toContain("Medium · Subscription");
+		const compactUsage = compact.indexOf("Usage");
+		expect(compact[compactUsage + 1]).toBe("Context 32k / 400k");
+		expect(compact[compactUsage + 2]).toMatch(/^\[■·+\]\s+8\.1%$/);
 		expect(compact).toContain("pi-atelier");
 		expect(compact).toContain("feature/sidebar ▲");
 		expect(compact).toContain("In 50.0k · Out 1.9k");
@@ -1209,7 +1209,7 @@ describe("sidebar snapshot and layout", () => {
 
 		const regular = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, 44, 36, false));
 		expect(regular).toContainEqual(expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/));
-		expect(regular).toContain("OPENAI-CODEX · MEDIUM · SUBSCRIPTION");
+		expect(regular).toContain("OpenAI-Codex · Medium · Subscription");
 		expect(regular).toContain("pi-atelier · feature/sidebar ▲");
 		expect(regular).toContainEqual(expect.stringMatching(/^8 \/ 12 active\s+▾$/));
 	});
@@ -1224,23 +1224,22 @@ describe("sidebar snapshot and layout", () => {
 		for (const width of [40, 43, 44]) {
 			const regular = contentRows(renderSidebarLines(snapshot(), expandedConfig, theme, width, 36, false));
 			expect(regular).toContainEqual(expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/));
-			expect(regular).toContainEqual(expect.stringMatching(/^OPENAI-CODEX/));
+			expect(regular).toContainEqual(expect.stringMatching(/^OpenAI-Codex/));
 			expect(regular).toContainEqual(expect.stringMatching(/^8 \/ 12 active\s+▾$/));
 		}
 	});
 
 	it("renders a compact segmented context meter that adapts to width", () => {
 		const narrow = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 28, 36, false));
-		const narrowContext = narrow.indexOf("CONTEXT");
-		expect(narrow[narrowContext + 1]).toMatch(/^32k \/ 400k\s+8\.1%$/);
-		expect(narrow[narrowContext + 2]).toMatch(/^\[■·+\]$/);
+		const narrowUsage = narrow.indexOf("Usage");
+		expect(narrow[narrowUsage + 1]).toBe("Context 32k / 400k");
+		expect(narrow[narrowUsage + 2]).toMatch(/^\[■·+\]\s+8\.1%$/);
 
 		for (const width of [40, 44, 72]) {
 			const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 36, false));
-			const contextIndex = rows.indexOf("CONTEXT");
-			expect(rows[contextIndex + 1]).toMatch(/^32k \/ 400k\s+8\.1%$/);
-			expect(rows[contextIndex + 2]).toMatch(/^\[■·+\]$/);
-			expect(visibleWidth(rows[contextIndex + 1] ?? "")).toBeLessThanOrEqual(width - 6);
+			const usageIndex = rows.indexOf("Usage");
+			expect(rows[usageIndex + 1]).toMatch(/^Context 32k \/ 400k \[■·+\]\s+8\.1%$/);
+			expect(visibleWidth(rows[usageIndex + 1] ?? "")).toBeLessThanOrEqual(width - 6);
 		}
 	});
 
@@ -1255,7 +1254,7 @@ describe("sidebar snapshot and layout", () => {
 		});
 		const rows = contentRows(renderSidebarLines(missingSession, DEFAULT_CONFIG, theme, 44, 36, false));
 		const sessionIndex = rows.findIndex((row) => row.startsWith("SESSION "));
-		const usageIndex = rows.findIndex((row) => row.startsWith("USAGE "));
+		const usageIndex = rows.findIndex((row) => row.startsWith("Usage "));
 		expect(rows.slice(sessionIndex + 1, usageIndex)).not.toContain("—");
 		expect(rows.slice(sessionIndex + 1, usageIndex)).toContain("6 entries · ephemeral");
 	});
@@ -1286,18 +1285,19 @@ describe("sidebar snapshot and layout", () => {
 		const fg = vi.fn((_color: string, text: string) => text);
 		const unnamedTheme = { fg, bold: theme.bold, italic: theme.italic };
 		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, unnamedTheme, 44, 36, true));
-		const usageIndex = rows.indexOf("USAGE");
-		expect(rows[usageIndex + 1]).toBe("In 50.0k  Out 1.9k");
-		expect(rows[usageIndex + 2]).toBe("Cache 100.0k  Hit 96.0%");
-		expect(rows[usageIndex + 3]).toBe("Cost $0.479");
-		for (const label of ["In", "Out", "Cache", "Hit", "Cost"]) {
+		const usageIndex = rows.indexOf("Usage");
+		expect(rows[usageIndex + 1]).toBe("Context 32k / 400k [■·········]   8.1%");
+		expect(rows[usageIndex + 2]).toBe("In 50.0k  Out 1.9k");
+		expect(rows[usageIndex + 3]).toBe("Cache 100.0k  Hit 96.0%");
+		expect(rows[usageIndex + 4]).toBe("Cost $0.479");
+		for (const label of ["Context", "In", "Out", "Cache", "Hit", "Cost"]) {
 			expect(fg).toHaveBeenCalledWith("muted", label);
 		}
 		for (const width of [44, 56, 72]) {
 			const wideRows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, width, 36, false));
-			const wideUsage = wideRows.indexOf("USAGE");
-			expect(wideRows[wideUsage + 1]).toBe("In 50.0k  Out 1.9k");
-			expect(wideRows[wideUsage + 2]).toBe("Cache 100.0k  Hit 96.0%");
+			const wideUsage = wideRows.indexOf("Usage");
+			expect(wideRows[wideUsage + 2]).toBe("In 50.0k  Out 1.9k");
+			expect(wideRows[wideUsage + 3]).toBe("Cache 100.0k  Hit 96.0%");
 		}
 	});
 
@@ -1315,13 +1315,14 @@ describe("sidebar snapshot and layout", () => {
 			},
 		};
 		const rows = contentRows(renderSidebarLines(unavailable, DEFAULT_CONFIG, theme, 44, 36, false));
-		expect(rows).not.toContain("USAGE");
-		expect(rows).toContain("OPENAI-CODEX · MEDIUM · SUBSCRIPTION");
+		expect(rows).toContain("Usage");
+		expect(rows).toContainEqual(expect.stringMatching(/^Context 32k \/ 400k \[■·+\]\s+8\.1%$/));
+		expect(rows).toContain("OpenAI-Codex · Medium · Subscription");
 	});
 
 	it("renders quiet section labels without ornamental rules", () => {
 		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false));
-		for (const heading of ["AGENT", "CONTEXT", "WORKSPACE", "USAGE", "TOOLS"]) {
+		for (const heading of ["Agent", "Usage", "Workspace", "Tools"]) {
 			expect(rows).toContain(heading);
 		}
 		expect(rows).toEqual(expect.not.arrayContaining([expect.stringMatching(/^[A-Z &]+ ─/)]));
@@ -1331,7 +1332,7 @@ describe("sidebar snapshot and layout", () => {
 		const rows = contentRows(
 			renderSidebarLines(withActivity(activeActivity()), DEFAULT_CONFIG, theme, 44, 36, false, 20_000),
 		);
-		expect(rows).toContain("ACTIVITY");
+		expect(rows).toContain("Activity");
 		expect(rows).toContain("Turn 3 · running 19s");
 		expect(rows).toEqual(
 			expect.arrayContaining([
@@ -1460,7 +1461,7 @@ describe("sidebar snapshot and layout", () => {
 		const idleRows = contentRows(
 			renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false, 20_000),
 		);
-		expect(idleRows).toContain("ACTIVITY");
+		expect(idleRows).toContain("Activity");
 		expect(idleRows).toContain("Ready");
 		expect(idleRows).toContain("TTFT ~ · TPS ~");
 
@@ -1525,7 +1526,7 @@ describe("sidebar snapshot and layout", () => {
 				20_000,
 			),
 		);
-		expect(idleWithRecent).toContain("ACTIVITY");
+		expect(idleWithRecent).toContain("Activity");
 		expect(idleWithRecent).toEqual(
 			expect.arrayContaining([expect.stringMatching(/^bash\s+npm test\s+done 1s$/)]),
 		);
@@ -1551,7 +1552,7 @@ describe("sidebar snapshot and layout", () => {
 				20_000,
 			),
 		);
-		expect(idleWithActive).toContain("ACTIVITY");
+		expect(idleWithActive).toContain("Activity");
 		expect(idleWithActive).toEqual(
 			expect.arrayContaining([expect.stringMatching(/^read\s+src\/a\.ts\s+5s$/)]),
 		);
@@ -1573,7 +1574,7 @@ describe("sidebar snapshot and layout", () => {
 				20_000,
 			),
 		);
-		expect(idleWithCounts).toContain("ACTIVITY");
+		expect(idleWithCounts).toContain("Activity");
 		expect(idleWithCounts).toContain("tools 0 done · 2 failed");
 	});
 
@@ -1758,38 +1759,36 @@ describe("sidebar snapshot and layout", () => {
 		});
 
 		const fullRows = contentRows(renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 43, false, 20_000));
-		expect(fullRows).toContain("TOOLS");
-		expect(fullRows).toContain("USAGE");
-		expect(fullRows).toContain("WORKSPACE");
-		expect(fullRows.findIndex((row) => /^read\s+active-a/.test(row))).toBeLessThan(
-			fullRows.indexOf("CONTEXT"),
-		);
+		expect(fullRows).toContain("Tools");
+		expect(fullRows).toContain("Usage");
+		expect(fullRows).toContain("Workspace");
+		expect(fullRows.findIndex((row) => /^read\s+active-a/.test(row))).toBeLessThan(fullRows.indexOf("Usage"));
 
 		const withoutSession = contentRows(
-			renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 36, false, 20_000),
+			renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 33, false, 20_000),
 		);
-		expect(withoutSession).toContain("TOOLS");
-		expect(withoutSession).toContain("USAGE");
-		expect(withoutSession).toContain("WORKSPACE");
+		expect(withoutSession).toContain("Tools");
+		expect(withoutSession).toContain("Usage");
+		expect(withoutSession).toContain("Workspace");
 		expect(withoutSession).not.toContain("Sidebar implementation");
 		expect(withoutSession).not.toContain("38 entries · persisted");
 
 		const withoutTools = contentRows(
-			renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 32, false, 20_000),
+			renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 29, false, 20_000),
 		);
-		expect(withoutTools).not.toContain("TOOLS");
-		expect(withoutTools).toContain("USAGE");
-		expect(withoutTools).toContain("WORKSPACE");
+		expect(withoutTools).not.toContain("Tools");
+		expect(withoutTools).toContain("Usage");
+		expect(withoutTools).toContain("Workspace");
 
 		const coreOnly = contentRows(renderSidebarLines(ranked, DEFAULT_CONFIG, theme, 44, 26, false, 20_000));
-		expect(coreOnly).not.toContain("TOOLS");
-		expect(coreOnly).not.toContain("USAGE");
-		expect(coreOnly).toContain("WORKSPACE");
+		expect(coreOnly).not.toContain("Tools");
+		expect(coreOnly).toContain("Usage");
+		expect(coreOnly).toContain("Workspace");
 		expect(coreOnly).toContain("5 tracked  +182  −47");
 		expect(coreOnly).not.toContain("Sidebar implementation");
 		expect(coreOnly).not.toContain("38 entries · persisted");
-		expect(coreOnly).toContain("AGENT");
-		expect(coreOnly).toContain("CONTEXT");
+		expect(coreOnly).toContain("Agent");
+		expect(coreOnly).toContainEqual(expect.stringMatching(/^Context 32k \/ 400k \[■·+\]\s+8\.1%$/));
 	});
 
 	it("normalizes tools, collapses names by default, and expands them from configuration", () => {
@@ -1805,13 +1804,13 @@ describe("sidebar snapshot and layout", () => {
 		expect(toolsSnapshot.activeToolNames).toEqual(["bash", "edit", "read"]);
 
 		const collapsed = contentRows(renderSidebarLines(toolsSnapshot, DEFAULT_CONFIG, theme, 44, 36, false));
-		const collapsedIndex = collapsed.indexOf("TOOLS");
+		const collapsedIndex = collapsed.indexOf("Tools");
 		expect(collapsed[collapsedIndex + 1]).toMatch(/^3 \/ 7 active\s+▸$/);
 		expect(collapsed).not.toContain("bash  edit");
 
 		const expandedConfig = { ...DEFAULT_CONFIG, showSidebarToolNames: true };
 		const expanded = contentRows(renderSidebarLines(toolsSnapshot, expandedConfig, theme, 44, 36, false));
-		const expandedIndex = expanded.indexOf("TOOLS");
+		const expandedIndex = expanded.indexOf("Tools");
 		expect(expanded[expandedIndex + 1]).toMatch(/^3 \/ 7 active\s+▾$/);
 		expect(expanded[expandedIndex + 2]).toBe("bash  edit");
 		expect(expanded[expandedIndex + 3]).toBe("read");
@@ -1819,14 +1818,14 @@ describe("sidebar snapshot and layout", () => {
 
 		for (const width of [44, 56, 72]) {
 			const wide = contentRows(renderSidebarLines(toolsSnapshot, expandedConfig, theme, width, 36, false));
-			const wideIndex = wide.indexOf("TOOLS");
+			const wideIndex = wide.indexOf("Tools");
 			expect(wide[wideIndex + 2]).toBe("bash  edit");
 			expect(wide[wideIndex + 3]).toBe("read");
 		}
 
 		for (const width of [28, 39]) {
 			const narrow = contentRows(renderSidebarLines(toolsSnapshot, expandedConfig, theme, width, 36, false));
-			const narrowIndex = narrow.indexOf("TOOLS");
+			const narrowIndex = narrow.indexOf("Tools");
 			expect(narrow[narrowIndex + 1]).toMatch(/^3 \/ 7 active\s+▸$/);
 			expect(narrow).not.toContain("bash  edit");
 			expect(narrow).not.toContain("read");
@@ -1866,7 +1865,7 @@ describe("sidebar snapshot and layout", () => {
 			extensionStatuses: [],
 		});
 		const rows = contentRows(renderSidebarLines(toolsSnapshot, DEFAULT_CONFIG, theme, 44, 36, false));
-		const toolsIndex = rows.indexOf("TOOLS");
+		const toolsIndex = rows.indexOf("Tools");
 		expect(rows[toolsIndex + 1]).toMatch(/^0 \/ 7 active\s+▸$/);
 		expect(rows[toolsIndex + 2]).toBe("");
 	});
@@ -1881,7 +1880,7 @@ describe("sidebar snapshot and layout", () => {
 			extensionStatuses: [],
 		});
 		const rows = contentRows(renderSidebarLines(emptyStatuses, DEFAULT_CONFIG, theme, 44, 36, false));
-		const toolsIndex = rows.indexOf("TOOLS");
+		const toolsIndex = rows.indexOf("Tools");
 		expect(toolsIndex).toBeGreaterThan(-1);
 		expect(rows[toolsIndex + 1]).toMatch(/^8 \/ 12 active\s+▸$/);
 		expect(rows.slice(toolsIndex + 2)).not.toContain("—");
@@ -1898,7 +1897,7 @@ describe("sidebar snapshot and layout", () => {
 			extensionStatuses: ["tests \u001b[31mpassing", "api\nready", "sync warning", "index failed", "   "],
 		});
 		const rows = contentRows(renderSidebarLines(statusSnapshot, DEFAULT_CONFIG, theme, 44, 36, false));
-		expect(rows).toContain("ALERTS");
+		expect(rows).toContain("Alerts");
 		expect(rows).toContain("▲ sync warning");
 		expect(rows).toContain("✕ index failed");
 		expect(rows).not.toContain("tests passing");
@@ -1910,17 +1909,16 @@ describe("sidebar snapshot and layout", () => {
 		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false));
 		expect(rows).toContainEqual(expect.stringMatching(/^8 \/ 12 active\s+▸$/));
 		expect(rows).not.toContain("tests passing");
-		expect(rows).not.toContain("ALERTS");
+		expect(rows).not.toContain("Alerts");
 	});
 
 	it("keeps only the required hierarchy in a compact 12 row rail", () => {
 		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 12, false).join("\n");
 		expect(text).not.toContain("▛▀▜");
-		expect(text).toContain("AGENT");
-		expect(text).toContain("CONTEXT");
-		expect(text).not.toContain("WORKSPACE");
-		expect(text).not.toContain("USAGE");
-		expect(text).not.toContain("TOOLS");
+		expect(text).toContain("Agent");
+		expect(text).toContain("Usage");
+		expect(text).not.toContain("Workspace");
+		expect(text).not.toContain("Tools");
 		expect(text).not.toContain("tests passing");
 	});
 
@@ -1989,17 +1987,18 @@ describe("sidebar snapshot and layout", () => {
 			],
 		};
 		const rows = contentRows(renderSidebarLines(populated, configWithoutAgent, theme, 44, 64, false, 0));
-		expect(rows).not.toContain("AGENT");
-		for (const panel of ["ACTIVITY", "TODOS", "CONTEXT", "WORKSPACE", "USAGE", "TOOLS"]) {
+		expect(rows).not.toContain("Agent");
+		for (const panel of ["Activity", "Usage", "Workspace", "Tools"]) {
 			expect(rows).toContain(panel);
 		}
+		expect(rows).toContain("Todos · 1/2");
 		expect(rows.some((row) => row.includes("Visible TODO"))).toBe(true);
 	});
 
 	it("shows the Agent panel when showSidebarAgent is true", () => {
 		const configWithAgent = { ...DEFAULT_CONFIG, showSidebarAgent: true };
 		const rows = contentRows(renderSidebarLines(snapshot(), configWithAgent, theme, 44, 36, false, 0));
-		expect(rows).toContain("AGENT");
+		expect(rows).toContain("Agent");
 	});
 });
 
@@ -2025,7 +2024,7 @@ describe("sidebar component and overlay", () => {
 			theme: { fg, bold: theme.bold, italic: theme.italic },
 		});
 
-		expect(component.render(44).join("\n")).toContain("RESIZE");
+		expect(component.render(44).join("\n")).toContain("Resize");
 		expect(fg).toHaveBeenCalledWith("warning", "│");
 	});
 
@@ -2459,7 +2458,7 @@ describe("sidebar component and overlay", () => {
 describe("todos panel", () => {
 	it("omits todos panel when list is empty", () => {
 		const rows = contentRows(renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 36, false));
-		expect(rows).not.toContain("TODOS");
+		expect(rows).not.toContain("Todos");
 	});
 
 	it("renders todos with all 3 status states", () => {
@@ -2480,8 +2479,8 @@ describe("todos panel", () => {
 			],
 		});
 		const rows = contentRows(renderSidebarLines(snapWithTodos, DEFAULT_CONFIG, theme, 44, 36, false));
-		expect(rows).toContain("TODOS");
-		expect(rows).toContain("1/3");
+		expect(rows).toContain("Todos · 1/3");
+		expect(rows).not.toContain("1/3");
 		expect(rows).toContain("✓ #1 Review diff");
 		expect(rows).toContain("◐ #2 Write tests");
 		expect(rows).toContain("○ #3 Commit changes");
@@ -2502,7 +2501,7 @@ describe("todos panel", () => {
 		});
 		const config = { ...DEFAULT_CONFIG, showSidebarTodos: false };
 		const rows = contentRows(renderSidebarLines(snapWithTodos, config, theme, 44, 36, false));
-		expect(rows).not.toContain("TODOS");
+		expect(rows).not.toContain("Todos");
 	});
 
 	it("sanitizes ansi codes in todo text", () => {
