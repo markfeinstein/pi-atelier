@@ -2,8 +2,8 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
+import { initTheme } from "@earendil-works/pi-coding-agent";
 import atelierExtension, {
-	PI_ATELIER_SESSION_CONFIG_ENTRY_TYPE,
 	SIDEBAR_PANEL_EVENT_CHANNEL,
 	type AtelierExtensionDependencies,
 } from "../extensions/index.js";
@@ -42,6 +42,7 @@ function harness(
 	notificationPlatform: NodeJS.Platform = "linux",
 	interactiveMenus = false,
 	extensionDependencies: AtelierExtensionDependencies = {},
+	options: { throwOnEventUnsubscribe?: readonly string[]; throwOnEventSubscribe?: readonly string[] } = {},
 ) {
 	const handlers = new Map<string, (...args: any[]) => unknown>();
 	const commands = new Map<string, any>();
@@ -66,10 +67,15 @@ function harness(
 		on: vi.fn((name: string, handler: (...args: any[]) => unknown) => handlers.set(name, handler)),
 		events: {
 			on: vi.fn((channel: string, handler: (data: unknown) => void) => {
+				if (options.throwOnEventSubscribe?.includes(channel)) throw new Error(`subscribe failed: ${channel}`);
 				const channelHandlers = eventBusHandlers.get(channel) ?? new Set();
 				channelHandlers.add(handler);
 				eventBusHandlers.set(channel, channelHandlers);
-				return () => channelHandlers.delete(handler);
+				return () => {
+					if (options.throwOnEventUnsubscribe?.includes(channel))
+						throw new Error(`unsubscribe failed: ${channel}`);
+					return channelHandlers.delete(handler);
+				};
 			}),
 			emit: vi.fn((channel: string, data: unknown) => {
 				for (const handler of eventBusHandlers.get(channel) ?? []) handler(data);
@@ -84,6 +90,7 @@ function harness(
 		getThinkingLevel: vi.fn().mockReturnValue("medium"),
 		getActiveTools: vi.fn().mockReturnValue(["read"]),
 		getAllTools: vi.fn().mockReturnValue([{ name: "read" }]),
+		setSessionName: vi.fn(),
 	};
 	const custom = vi.fn((factory: (...args: any[]) => any, options: any): Promise<any> => {
 		const requestRender = vi.fn();
@@ -130,6 +137,7 @@ function harness(
 		getContextUsage: vi.fn().mockReturnValue({ tokens: 10, contextWindow: 100, percent: 10 }),
 		model: undefined,
 		modelRegistry: { isUsingOAuth: vi.fn().mockReturnValue(false) },
+		compact: vi.fn(),
 		sessionManager: {
 			getEntries: vi.fn().mockReturnValue([]),
 			getBranch: vi.fn().mockReturnValue([]),
@@ -320,7 +328,7 @@ describe("extension registration", () => {
 				});
 				await command(h, "sidebar on");
 				const rendered = h.overlays.at(-1)?.component.render(44).join("\\n") ?? "";
-				expect(rendered).toContain("Queue");
+				expect(rendered).toContain("QUEUE");
 				expect(rendered).toContain("queued 2");
 			},
 		);
@@ -349,44 +357,18 @@ describe("extension registration", () => {
 		expect(h.shortcuts).toContain("ctrl+shift+r");
 	});
 
-	it("applies session-scoped Atelier configuration from the active branch", async () => {
-		const h = harness();
-		h.ctx.sessionManager.getBranch.mockReturnValue([
-			{
-				type: "custom",
-				customType: PI_ATELIER_SESSION_CONFIG_ENTRY_TYPE,
-				data: { colorScheme: "inherit" },
-			},
-		]);
-		await start(h);
-
-		const footer = h.setFooter.mock.calls[0]?.[0](
-			{ requestRender: vi.fn() },
-			{
-				name: "dark",
-				fg: (color: string, text: string) => `<${color}>${text}</${color}>`,
-				bold: (text: string) => text,
-				italic: (text: string) => text,
-			},
-			{
-				getGitBranch: () => undefined,
-				getExtensionStatuses: () => new Map(),
-				onBranchChange: () => () => undefined,
-			},
-		);
-
-		expect(footer.render(120).join("\n")).toContain("<thinkingLow>● READY</thinkingLow>");
-	});
-
 	it("routes alt+a to the Control Center", async () => {
-		const h = harness();
+		const h = harness("tui", "linux", true);
 		await start(h);
 		const before = h.custom.mock.calls.length;
 
-		await h.shortcutHandlers.get("alt+a")?.(h.ctx);
+		const opening = h.shortcutHandlers.get("alt+a")?.(h.ctx);
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
 
 		expect(h.custom.mock.calls.length).toBe(before + 1);
 		expect(h.overlays.at(-1)?.component.render(80).join("\n")).toContain("Atelier Control Center");
+		h.overlays.at(-1)?.component.handleInput("\u001b");
+		await opening;
 	});
 
 	it("registers the resize shortcut exactly once across session replacement", async () => {
@@ -480,6 +462,411 @@ describe("extension registration", () => {
 		expect(replacementSetFooter).not.toHaveBeenCalledWith(undefined);
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 		expect(renderOverlayText(h, 1)).toContain("Distinct UI replacement");
+	});
+
+	it("closes a session-owned Control Center overlay during replacement", async () => {
+		const h = harness("tui", "linux", true);
+		await start(h);
+
+		const opening = command(h, "");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		const controlCenter = h.overlays[1]!;
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+		await opening;
+
+		expect(controlCenter.done).toHaveBeenCalledOnce();
+		expect(controlCenter.closed).toBe(true);
+		expect(renderOverlayText(h, 2)).toContain("Replacement session");
+	});
+
+	it("closes a session-owned Display Settings overlay during replacement", async () => {
+		const h = harness("tui", "linux", true);
+		await start(h);
+
+		const opening = command(h, "display");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		const displaySettings = h.overlays[1]!;
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+		await opening;
+
+		expect(displaySettings.done).toHaveBeenCalledOnce();
+		expect(displaySettings.closed).toBe(true);
+		expect(renderOverlayText(h, 2)).toContain("Replacement session");
+	});
+
+	it.each([
+		["Display", "display"],
+		["Control Center", ""],
+	])("settles a retired %s command when host done throws", async (_label, args) => {
+		const h = harness("tui", "linux", true);
+		await start(h);
+		const opening = command(h, args);
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		const displaySettings = h.overlays[1]!;
+		displaySettings.done.mockImplementation(() => {
+			throw new Error("overlay close failed");
+		});
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+
+		await expect(opening).resolves.toBeUndefined();
+		expect(displaySettings.closed).toBe(false);
+		expect(() => displaySettings.component.render(80)).not.toThrow();
+		expect(displaySettings.component.render(80)).toEqual([]);
+		displaySettings.requestRender.mockClear();
+		expect(() => displaySettings.component.handleInput(" ")).not.toThrow();
+		expect(displaySettings.requestRender).not.toHaveBeenCalled();
+		expect(renderOverlayText(h, 2)).toContain("Replacement session");
+	});
+
+	it("renders an inert Display workspace when retirement cannot remove its overlay", async () => {
+		const h = harness("tui", "linux", true);
+		await start(h);
+		const opening = command(h, "display");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		const displaySettings = h.overlays[1]!;
+		displaySettings.done.mockImplementation(() => {
+			throw new Error("display overlay close failed");
+		});
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+
+		expect(displaySettings.closed).toBe(false);
+		expect(() => displaySettings.component.render(80)).not.toThrow();
+		expect(displaySettings.component.render(80)).toEqual([]);
+		displaySettings.requestRender.mockClear();
+		expect(() => displaySettings.component.handleInput(" ")).not.toThrow();
+		expect(displaySettings.requestRender).not.toHaveBeenCalled();
+		expect(renderOverlayText(h, 2)).toContain("Replacement session");
+	});
+
+	it("renders an inert retired Control Center tool overlay", async () => {
+		initTheme("dark");
+		const h = harness("tui", "linux", true);
+		const setActiveTools = vi.fn();
+		(h.pi as any).setActiveTools = setActiveTools;
+		await start(h);
+		void command(h, "");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		const root = h.overlays[1]!;
+		root.component.handleInput("\u001b[B");
+		root.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(3));
+		const controls = h.overlays[2]!;
+		controls.component.handleInput("\u001b[B");
+		controls.component.handleInput("\u001b[B");
+		controls.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(4));
+		const toolSettings = h.overlays[3]!;
+		toolSettings.done.mockImplementation(() => {
+			throw new Error("tool overlay close failed");
+		});
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+
+		expect(toolSettings.closed).toBe(false);
+		expect(() => toolSettings.component.render(80)).not.toThrow();
+		expect(toolSettings.component.render(80)).toEqual([]);
+		setActiveTools.mockClear();
+		expect(() => toolSettings.component.handleInput(" ")).not.toThrow();
+		expect(setActiveTools).not.toHaveBeenCalled();
+		expect(renderOverlayText(h, 4)).toContain("Replacement session");
+	});
+
+	it("renders an inert retired Control Center text input", async () => {
+		const h = harness("tui", "linux", true);
+		await start(h);
+		void command(h, "");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		const root = h.overlays[1]!;
+		root.component.handleInput("\u001b[B");
+		root.component.handleInput("\u001b[B");
+		root.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(3));
+		const actions = h.overlays[2]!;
+		actions.component.handleInput("\u001b[B");
+		actions.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(4));
+		const textInput = h.overlays[3]!;
+		textInput.done.mockImplementation(() => {
+			throw new Error("text input close failed");
+		});
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+
+		expect(textInput.closed).toBe(false);
+		expect(() => textInput.component.render(80)).not.toThrow();
+		expect(textInput.component.render(80)).toEqual([]);
+		expect(() => textInput.component.handleInput("new name")).not.toThrow();
+		expect(h.pi.setSessionName).not.toHaveBeenCalled();
+		expect(renderOverlayText(h, 4)).toContain("Replacement session");
+	});
+
+	it("keeps cleanup exception-safe when independent disposers throw", async () => {
+		const h = harness(
+			"tui",
+			"darwin",
+			false,
+			{},
+			{
+				throwOnEventUnsubscribe: [SIDEBAR_PANEL_EVENT_CHANNEL],
+			},
+		);
+		await start(h);
+		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
+		expect(h.spawnNotificationProcess).toHaveBeenCalledOnce();
+		h.setFooter.mockImplementation((value) => {
+			if (value === undefined) throw new Error("footer cleanup failed");
+		});
+
+		await h.handlers.get("session_shutdown")?.({ reason: "quit" }, h.ctx);
+
+		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
+		expect(h.notificationProcess.kill).toHaveBeenCalledOnce();
+		expect(h.getEventBusHandlerCount("rpiv:ask-user:blocked")).toBe(0);
+		await command(h, "sidebar on");
+		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Pi Atelier is not active in this session", "warning");
+	});
+
+	it("keeps a candidate-local failure from replacing the current session", async () => {
+		const throwOnSubscribe: string[] = [];
+		const h = harness("tui", "darwin", false, {}, { throwOnEventSubscribe: throwOnSubscribe });
+		await start(h);
+		await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+		await h.handlers.get("tool_execution_start")?.(
+			{
+				type: "tool_execution_start",
+				toolCallId: "active-tool",
+				toolName: "read",
+				args: { path: "/tmp/project/current.ts" },
+			},
+			h.ctx,
+		);
+		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
+		expect(h.spawnNotificationProcess).toHaveBeenCalledOnce();
+		const currentBeforeFailure = renderOverlayText(h);
+		expect(currentBeforeFailure).toContain("Test session");
+		expect(currentBeforeFailure).toContain("current.ts");
+		throwOnSubscribe.push("rpiv:ask-user:blocked");
+		const failingCtx = replacementContext(h.ctx, "Failing candidate");
+		failingCtx.sessionManager.getBranch.mockReturnValue([
+			todoBranchEntry({ todos: [{ id: 1, text: "Candidate TODO", done: false }], nextId: 2 }),
+		]);
+
+		await start(h, failingCtx);
+
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith(
+			"Pi Atelier could not start: subscribe failed: rpiv:ask-user:blocked",
+			"error",
+		);
+		expect(h.overlays).toHaveLength(1);
+		expect(h.overlays[0]?.done).not.toHaveBeenCalled();
+		expect(h.getEventBusHandlerCount(SIDEBAR_PANEL_EVENT_CHANNEL)).toBe(1);
+		expect(h.getEventBusHandlerCount("rpiv:ask-user:blocked")).toBe(1);
+
+		h.pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+			version: 1,
+			type: "register",
+			source: "vendor",
+			revision: 1,
+			panel: { id: "vendor:candidate", title: "Candidate Panel", rows: ["candidate row"] },
+		});
+		await h.handlers.get("agent_start")?.({ type: "agent_start" }, failingCtx);
+		await h.handlers.get("tool_execution_start")?.(
+			{
+				type: "tool_execution_start",
+				toolCallId: "candidate-tool",
+				toolName: "read",
+				args: { path: "/tmp/project/candidate.ts" },
+			},
+			failingCtx,
+		);
+
+		const currentAfterFailure = renderOverlayText(h);
+		expect(currentAfterFailure).toContain("Test session");
+		expect(currentAfterFailure).toContain("current.ts");
+		expect(currentAfterFailure).not.toContain("Failing candidate");
+		expect(currentAfterFailure).not.toContain("Candidate TODO");
+		expect(currentAfterFailure).not.toContain("Candidate Panel");
+		expect(currentAfterFailure).not.toContain("candidate.ts");
+		expect(h.spawnNotificationProcess).toHaveBeenCalledOnce();
+	});
+
+	it("keeps active Sidebar snapshot failures visible", async () => {
+		const h = harness();
+		await start(h);
+		h.ctx.sessionManager.getBranch.mockImplementation(() => {
+			throw new Error("snapshot read failed");
+		});
+
+		const sidebar = renderOverlayText(h);
+		expect(sidebar).toContain("Sidebar unavailable");
+		expect(sidebar).toContain("snapshot read failed");
+	});
+
+	it("renders an inert stale Sidebar snapshot if overlay removal fails", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			todoBranchEntry({ todos: [{ id: 1, text: "Retired TODO", done: false }], nextId: 2 }),
+		]);
+		await start(h);
+		const footer = renderFooter(
+			h.setFooter.mock.calls[0]?.[0],
+			vi.fn(),
+			() => new Map([["stale", "retired extension failed"]]),
+		);
+		expect(footer.render(120).join("\n")).toContain("retired extension failed");
+		expect(renderOverlayText(h)).toContain("Retired TODO");
+		h.overlays[0]?.done.mockImplementation(() => {
+			throw new Error("overlay close failed");
+		});
+		const oldSessionManager = h.ctx.sessionManager;
+		oldSessionManager.getBranch.mockClear();
+		oldSessionManager.getSessionName.mockClear();
+		oldSessionManager.getSessionFile.mockClear();
+		h.overlays[0]?.requestRender.mockClear();
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+		oldSessionManager.getBranch.mockClear();
+		oldSessionManager.getSessionName.mockClear();
+		oldSessionManager.getSessionFile.mockClear();
+		h.overlays[0]?.requestRender.mockClear();
+
+		expect(() => renderOverlayText(h, 0)).not.toThrow();
+		const staleSidebar = renderOverlayText(h, 0);
+		expect(staleSidebar).not.toContain("Test session");
+		expect(staleSidebar).not.toContain("Retired TODO");
+		expect(staleSidebar).not.toContain("retired extension failed");
+		expect(staleSidebar).not.toContain("TODOS");
+		expect(oldSessionManager.getBranch).not.toHaveBeenCalled();
+		expect(oldSessionManager.getSessionName).not.toHaveBeenCalled();
+		expect(oldSessionManager.getSessionFile).not.toHaveBeenCalled();
+		expect(h.overlays[0]?.requestRender).not.toHaveBeenCalled();
+		expect(renderOverlayText(h, 1)).toContain("Replacement session");
+	});
+
+	it("does not publish deferred Display saves after replacement", async () => {
+		const saved = deferred<void>();
+		const saveConfigPatch = vi.fn<typeof persistConfigPatch>().mockImplementation(async () => {
+			await saved.promise;
+		});
+		const h = harness("tui", "linux", true, { saveConfigPatch });
+		await start(h);
+		const opening = command(h, "display");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		const displaySettings = h.overlays[1]!;
+
+		displaySettings.component.handleInput(" ");
+		displaySettings.component.handleInput("s");
+		await vi.waitFor(() => expect(saveConfigPatch).toHaveBeenCalledOnce());
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+		await opening;
+		displaySettings.requestRender.mockClear();
+		saved.resolve(undefined);
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(displaySettings.requestRender).not.toHaveBeenCalled();
+		expect(renderOverlayText(h, 2)).toContain("Replacement session");
+	});
+
+	it("suppresses deferred Control Center save notifications after replacement", async () => {
+		const saved = deferred<void>();
+		const saveConfigPatch = vi.fn<typeof persistConfigPatch>().mockImplementation(async () => {
+			await saved.promise;
+		});
+		const h = harness("tui", "linux", true, { saveConfigPatch });
+		await start(h);
+		const opening = command(h, "");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		h.overlays[1]!.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(3));
+		h.overlays[2]!.component.handleInput("\u001b[B");
+		h.overlays[2]!.component.handleInput("\r");
+		await vi.waitFor(() => expect(saveConfigPatch).toHaveBeenCalledOnce());
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+		saved.resolve(undefined);
+		await opening;
+
+		expect(h.ctx.ui.notify).not.toHaveBeenCalledWith(expect.stringContaining("Sidebar will start"), "info");
+		expect(h.ctx.ui.notify).not.toHaveBeenCalledWith(
+			expect.stringContaining("Sidebar startup preference could not be saved"),
+			"warning",
+		);
+		expect(renderOverlayText(h, h.overlays.length - 1)).toContain("Replacement session");
+	});
+
+	it("closes nested Control Center model prompts during replacement", async () => {
+		const h = harness("tui", "linux", true);
+		(h.ctx.modelRegistry as any).getAvailable = vi.fn().mockReturnValue([{ provider: "test", id: "model" }]);
+		await start(h);
+		const opening = command(h, "");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		h.overlays[1]!.component.handleInput("\u001b[B");
+		h.overlays[1]!.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(3));
+		h.overlays[2]!.component.handleInput("\u001b[B");
+		h.overlays[2]!.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(4));
+		const modelPrompt = h.overlays[3]!;
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+		await opening;
+
+		expect(modelPrompt.done).toHaveBeenCalledOnce();
+		expect(modelPrompt.closed).toBe(true);
+		expect(renderOverlayText(h, h.overlays.length - 1)).toContain("Replacement session");
+	});
+
+	it("closes the Control Center rename prompt during replacement", async () => {
+		const h = harness("tui", "linux", true);
+		await start(h);
+		const opening = command(h, "");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		h.overlays[1]!.component.handleInput("\u001b[B");
+		h.overlays[1]!.component.handleInput("\u001b[B");
+		h.overlays[1]!.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(3));
+		h.overlays[2]!.component.handleInput("\u001b[B");
+		h.overlays[2]!.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(4));
+		const renamePrompt = h.overlays[3]!;
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+		await opening;
+
+		expect(renamePrompt.done).toHaveBeenCalledOnce();
+		expect(renamePrompt.closed).toBe(true);
+		expect(h.pi.setSessionName).not.toHaveBeenCalled();
+		expect(renderOverlayText(h, h.overlays.length - 1)).toContain("Replacement session");
+	});
+
+	it("closes the Control Center compact prompt during replacement", async () => {
+		const h = harness("tui", "linux", true);
+		await start(h);
+		const opening = command(h, "");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
+		h.overlays[1]!.component.handleInput("\u001b[B");
+		h.overlays[1]!.component.handleInput("\u001b[B");
+		h.overlays[1]!.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(3));
+		h.overlays[2]!.component.handleInput("\u001b[B");
+		h.overlays[2]!.component.handleInput("\u001b[B");
+		h.overlays[2]!.component.handleInput("\r");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(4));
+		const compactPrompt = h.overlays[3]!;
+
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+		await opening;
+
+		expect(compactPrompt.done).toHaveBeenCalledOnce();
+		expect(compactPrompt.closed).toBe(true);
+		expect(h.ctx.compact).not.toHaveBeenCalled();
+		expect(renderOverlayText(h, h.overlays.length - 1)).toContain("Replacement session");
 	});
 
 	it("starts enabled and toggles the persistent sidebar on -> off -> on", async () => {
@@ -657,7 +1044,7 @@ describe("extension registration", () => {
 		expect(replacementSidebar).toContain("Post-shutdown session");
 		expect(replacementSidebar).not.toContain("Shutdown stale TODO");
 		expect(replacementSidebar).not.toContain("shutdown-stale.ts");
-		expect(replacementSidebar).not.toContain("Todos");
+		expect(replacementSidebar).not.toContain("TODOS");
 	});
 
 	it("does not retain published state when initialization fails", async () => {
@@ -740,7 +1127,7 @@ describe("extension registration", () => {
 		const recoveredSidebar = renderOverlayText(h, h.overlays.length - 1);
 		expect(recoveredSidebar).toContain("Recovered session");
 		expect(recoveredSidebar).not.toContain("Failure stale TODO");
-		expect(recoveredSidebar).not.toContain("Todos");
+		expect(recoveredSidebar).not.toContain("TODOS");
 	});
 
 	it("cancels pending system notifications during shutdown", async () => {
@@ -808,6 +1195,113 @@ describe("extension registration", () => {
 		expect(h.overlays[0]?.requestRender).not.toHaveBeenCalled();
 	});
 
+	it("disposes a mounted footer when setFooter removal throws", async () => {
+		const h = harness();
+		let mountedFooter: any;
+		const unsubscribe = vi.fn();
+		let branchChange: (() => void) | undefined;
+		h.setFooter.mockImplementation((value: unknown) => {
+			if (value === undefined) throw new Error("footer removal failed");
+			if (typeof value === "function") {
+				mountedFooter = value({ requestRender: vi.fn() }, FOOTER_THEME, {
+					getGitBranch: () => undefined,
+					getExtensionStatuses: () => new Map(),
+					onBranchChange: (callback: () => void) => {
+						branchChange = callback;
+						return unsubscribe;
+					},
+				});
+			}
+		});
+		await start(h);
+		mountedFooter.render(120);
+
+		await h.handlers.get("session_shutdown")?.({ reason: "quit" }, h.ctx);
+
+		expect(mountedFooter).toBeDefined();
+		expect(unsubscribe).toHaveBeenCalledOnce();
+		branchChange?.();
+		await h.handlers.get("session_shutdown")?.({ reason: "quit" }, h.ctx);
+		expect(unsubscribe).toHaveBeenCalledOnce();
+	});
+
+	it("detaches branch callbacks from a retired footer after removal fails", async () => {
+		const h = harness();
+		await start(h);
+		let branchChange: (() => void) | undefined;
+		const requestRender = vi.fn();
+		const factory = h.setFooter.mock.calls[0]?.[0];
+		expect(factory).toEqual(expect.any(Function));
+		const footer = factory({ requestRender }, FOOTER_THEME, {
+			getGitBranch: () => undefined,
+			getExtensionStatuses: () => new Map(),
+			onBranchChange: (callback: () => void) => {
+				branchChange = callback;
+				return () => undefined;
+			},
+		});
+		footer.render(120);
+		h.setFooter.mockImplementation((value: unknown) => {
+			if (value === undefined) throw new Error("footer removal failed");
+		});
+
+		await h.handlers.get("session_shutdown")?.({ reason: "quit" }, h.ctx);
+		branchChange?.();
+		expect(branchChange).toEqual(expect.any(Function));
+		expect(requestRender).not.toHaveBeenCalled();
+	});
+
+	it("disables a retained footer safely and does not revive it after enable", async () => {
+		const h = harness();
+		const mounted: Array<{
+			component: any;
+			requestRender: ReturnType<typeof vi.fn>;
+			branchChange: () => void;
+			unsubscribe: ReturnType<typeof vi.fn>;
+		}> = [];
+		h.setFooter.mockImplementation((value: unknown) => {
+			if (value === undefined) throw new Error("footer removal failed");
+			if (typeof value !== "function") return;
+			const requestRender = vi.fn();
+			let branchChange: (() => void) | undefined;
+			const unsubscribe = vi.fn();
+			const component = value({ requestRender }, FOOTER_THEME, {
+				getGitBranch: () => undefined,
+				getExtensionStatuses: () => new Map([["live", "live footer"]]),
+				onBranchChange: (onChange: () => void) => {
+					branchChange = onChange;
+					return unsubscribe;
+				},
+			});
+			mounted.push({ component, requestRender, branchChange: () => branchChange?.(), unsubscribe });
+		});
+
+		await start(h);
+		expect(mounted).toHaveLength(1);
+		const oldFooter = mounted[0];
+		expect(oldFooter).toBeDefined();
+		expect(oldFooter?.component.render(120).join("\n")).toContain("live footer");
+
+		await expect(command(h, "disable")).resolves.toBeUndefined();
+		expect(oldFooter?.unsubscribe).toHaveBeenCalledOnce();
+		expect(oldFooter?.component.render(120).join("\n")).not.toContain("live footer");
+		oldFooter?.branchChange();
+		expect(oldFooter?.requestRender).not.toHaveBeenCalled();
+
+		await command(h, "enable");
+		expect(mounted).toHaveLength(2);
+		oldFooter?.branchChange();
+		expect(oldFooter?.requestRender).not.toHaveBeenCalled();
+		const newFooter = mounted[1];
+		expect(newFooter).toBeDefined();
+		newFooter?.branchChange();
+		expect(newFooter?.requestRender).toHaveBeenCalledOnce();
+
+		await h.handlers.get("session_shutdown")?.({ reason: "quit" }, h.ctx);
+		expect(newFooter?.unsubscribe).toHaveBeenCalledOnce();
+		expect(oldFooter?.unsubscribe).toHaveBeenCalledOnce();
+	});
+
 	it("stops reporting retired data from a footer that outlives its own removal", async () => {
 		const h = harness();
 		await start(h);
@@ -821,9 +1315,9 @@ describe("extension registration", () => {
 		h.setFooter.mockImplementation((value: unknown) => {
 			if (value === undefined) throw new Error("footer removal failed");
 		});
-
 		await h.handlers.get("session_shutdown")?.({ reason: "quit" }, h.ctx);
 
+		expect(() => footer.render(120)).not.toThrow();
 		expect(footer.render(120).join("\n")).not.toContain("atelier index failed");
 	});
 
@@ -973,12 +1467,15 @@ describe("extension registration", () => {
 	});
 
 	it("passes command state to the menu controller", async () => {
-		const h = harness();
+		const h = harness("tui", "linux", true);
 		await start(h);
 		await command(h, "sidebar on");
-		await command(h, "");
+		const opening = command(h, "");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
 		const menu = h.overlays[1]?.component.render(80).join("\n");
 		expect(menu).toContain("Sidebar: On");
+		h.overlays[1]?.component.handleInput("\u001b");
+		await opening;
 	});
 
 	it("passes contributed titles through the public Display seam and persists enabling them", async () => {
@@ -987,7 +1484,7 @@ describe("extension registration", () => {
 				sidebarPanelLayout: [{ id: "vendor:missing", visible: true }],
 			},
 			async () => {
-				const h = harness();
+				const h = harness("tui", "linux", true);
 				await start(h);
 				h.pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
 					version: 1,
@@ -996,13 +1493,14 @@ describe("extension registration", () => {
 					revision: 1,
 					panel: { id: "vendor:queue", title: "Queue title", rows: ["queued"] },
 				});
-				await command(h, "display");
+				const opening = command(h, "display");
+				await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
 				const workspace = h.overlays.at(-1)?.component;
 				const rendered = workspace?.render(120).join("\n") ?? "";
 				expect(rendered).toContain("vendor:missing");
 
 				// Two display rows, nine segments, and three actions precede configured panels.
-				for (let index = 0; index < 14 + 8; index += 1) workspace?.handleInput("\u001b[B");
+				for (let index = 0; index < 14 + 9; index += 1) workspace?.handleInput("\u001b[B");
 				const focusedRendered = workspace?.render(120).join("\n") ?? "";
 				expect(focusedRendered).toContain("Queue title");
 				expect(focusedRendered).toContain("unavailable");
@@ -1024,11 +1522,14 @@ describe("extension registration", () => {
 					"activity",
 					"alerts",
 					"todos",
-					"usage",
+					"context",
 					"workspace",
+					"usage",
 					"tools",
 					"vendor:queue",
 				]);
+				workspace?.handleInput("\u001b");
+				await opening;
 			},
 		);
 	});
@@ -1046,12 +1547,15 @@ describe("extension registration", () => {
 	});
 
 	it("opens the Display workspace directly and rejects it outside TUI mode", async () => {
-		const h = harness();
+		const h = harness("tui", "linux", true);
 		await start(h);
 		const before = h.custom.mock.calls.length;
-		await command(h, "display");
+		const opening = command(h, "display");
+		await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
 		expect(h.custom.mock.calls.length).toBe(before + 1);
 		expect(h.overlays.at(-1)?.component.render(80).join("\n")).toContain("DISPLAY SETTINGS");
+		h.overlays.at(-1)?.component.handleInput("\u001b");
+		await opening;
 
 		const printed = harness("print");
 		await command(printed, "display");
@@ -1205,7 +1709,7 @@ describe("extension registration", () => {
 		);
 
 		const sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
-		expect(sidebarText).toContain("Activity");
+		expect(sidebarText).toContain("ACTIVITY");
 		expect(sidebarText).toContain("Turn 3");
 		expect(sidebarText).toContain("running");
 		expect(sidebarText).toContain("bash");
@@ -1236,9 +1740,10 @@ describe("extension registration", () => {
 		vi.useFakeTimers();
 		vi.setSystemTime(1_000);
 		try {
-			const h = harness();
+			const h = harness("tui", "linux", true);
 			await start(h);
-			await command(h, "display");
+			const opening = command(h, "display");
+			await vi.waitFor(() => expect(h.overlays).toHaveLength(2));
 			const workspace = h.overlays.at(-1)?.component;
 			// Walk to the performance segment by name; its position in the list is not part of this test.
 			for (let guard = 20; guard > 0; guard -= 1) {
@@ -1301,6 +1806,8 @@ describe("extension registration", () => {
 				h.ctx,
 			);
 			expect(footer.render(160).join("\n")).toContain("TTFT 820ms · TPS 48.0");
+			workspace.handleInput("\u001b");
+			await opening;
 		} finally {
 			vi.useRealTimers();
 		}
@@ -1477,7 +1984,7 @@ describe("extension registration", () => {
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 		await command(h, "sidebar on");
 		const replacementText = h.overlays[1]?.component.render(44).join("\n") ?? "";
-		expect(replacementText).toContain("Activity");
+		expect(replacementText).toContain("ACTIVITY");
 		expect(replacementText).toContain("TTFT ~ · TPS ~");
 		expect(replacementText).not.toContain("old.ts");
 
@@ -1513,7 +2020,7 @@ describe("extension registration", () => {
 
 		const text = h.overlays[0]?.component.render(44).join("\n") ?? "";
 		expect(text).toContain("Working");
-		expect(text).toContain("Activity");
+		expect(text).toContain("ACTIVITY");
 		expect(text).toContain("Turn 1");
 	});
 
@@ -1549,7 +2056,7 @@ describe("extension registration", () => {
 			const activeRenderCount = h.overlays[1]?.requestRender.mock.calls.length ?? 0;
 			const activeText = h.overlays[1]?.component.render(44).join("\n") ?? "";
 			expect(activeText).toContain("Replacement session");
-			expect(activeText).toContain("Activity");
+			expect(activeText).toContain("ACTIVITY");
 			expect(activeText).toContain("Turn 7");
 			expect(activeText).toContain("running");
 			expect(activeText).toContain("bash");
@@ -1707,14 +2214,14 @@ describe("sidebar todos integration", () => {
 			progress: "1/3",
 			texts: ["Done", "Working", "Pending"],
 		},
-	])("shows Todos panel reconstructed from $name branch entries", async ({ details, progress, texts }) => {
+	])("shows TODOS panel reconstructed from $name branch entries", async ({ details, progress, texts }) => {
 		const h = harness();
 		h.ctx.sessionManager.getBranch.mockReturnValue([todoBranchEntry(details)]);
 		await start(h);
 		await command(h, "sidebar on");
 
 		const sidebarText = renderOverlayText(h);
-		expect(sidebarText).toContain("Todos");
+		expect(sidebarText).toContain("TODOS");
 		expect(sidebarText).toContain(progress);
 		for (const text of texts) expect(sidebarText).toContain(text);
 	});
@@ -1761,7 +2268,7 @@ describe("sidebar todos integration", () => {
 		await sessionTreeHandler!({ type: "session_tree", newLeafId: null, oldLeafId: "second" }, h.ctx);
 		sidebarText = sidebarOverlay.component.render(44).join("\n");
 		expect(sidebarText).not.toContain("Second branch task");
-		expect(sidebarText).not.toContain("Todos");
+		expect(sidebarText).not.toContain("TODOS");
 	});
 
 	it("filters out tasks with unknown statuses from sidebar", async () => {
@@ -1780,7 +2287,7 @@ describe("sidebar todos integration", () => {
 		await command(h, "sidebar on");
 
 		const sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
-		expect(sidebarText).toContain("Todos");
+		expect(sidebarText).toContain("TODOS");
 		expect(sidebarText).toContain("0/1");
 		expect(sidebarText).toContain("Valid");
 		expect(sidebarText).not.toContain("Deleted");
@@ -1868,7 +2375,7 @@ describe("sidebar todos integration", () => {
 		expect(h.overlays.at(-1)).toBeDefined();
 		const sidebarText = h.overlays.at(-1)!.component.render(44).join("\n");
 		expect(sidebarText).not.toContain("Stale task");
-		expect(sidebarText).not.toContain("Todos");
+		expect(sidebarText).not.toContain("TODOS");
 	});
 
 	it("clears cached todos when all task statuses are filtered out", async () => {
@@ -1895,10 +2402,10 @@ describe("sidebar todos integration", () => {
 		expect(h.overlays.at(-1)).toBeDefined();
 		const sidebarText = h.overlays.at(-1)!.component.render(44).join("\n");
 		expect(sidebarText).not.toContain("Stale task");
-		expect(sidebarText).not.toContain("Todos");
+		expect(sidebarText).not.toContain("TODOS");
 	});
 
-	it("persists hidden Agent independently from populated Todos across session reload", async () => {
+	it("persists hidden Agent independently from populated TODOS across session reload", async () => {
 		await withPersistedUserConfig({ showSidebarAgent: false }, async () => {
 			const h = harness();
 			h.ctx.sessionManager.getBranch.mockReturnValue([
@@ -1914,8 +2421,8 @@ describe("sidebar todos integration", () => {
 			await start(h);
 			expect(h.overlays[0]).toBeDefined();
 			const initialSidebar = h.overlays[0]!.component.render(44).join("\n");
-			expect(initialSidebar).not.toContain("Agent");
-			expect(initialSidebar).toContain("Todos");
+			expect(initialSidebar).not.toContain("AGENT");
+			expect(initialSidebar).toContain("TODOS");
 			expect(initialSidebar).toContain("1/2");
 			expect(initialSidebar).toContain("Visible TODO");
 
@@ -1923,14 +2430,14 @@ describe("sidebar todos integration", () => {
 			expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 			expect(h.overlays[1]).toBeDefined();
 			const reloadedSidebar = h.overlays[1]!.component.render(44).join("\n");
-			expect(reloadedSidebar).not.toContain("Agent");
-			expect(reloadedSidebar).toContain("Todos");
+			expect(reloadedSidebar).not.toContain("AGENT");
+			expect(reloadedSidebar).toContain("TODOS");
 			expect(reloadedSidebar).toContain("1/2");
 			expect(reloadedSidebar).toContain("Visible TODO");
 		});
 	});
 
-	it("hides Todos panel and preserves full output when persisted showSidebarTodos is false", async () => {
+	it("hides TODOS panel and preserves full output when persisted showSidebarTodos is false", async () => {
 		await withPersistedUserConfig({ showSidebarTodos: false }, async () => {
 			const h = harness();
 			h.ctx.sessionManager.getBranch.mockReturnValue([
@@ -1941,7 +2448,7 @@ describe("sidebar todos integration", () => {
 
 			expect(h.overlays[0]).toBeDefined();
 			const sidebarText = h.overlays[0]!.component.render(44).join("\n");
-			expect(sidebarText).not.toContain("Todos");
+			expect(sidebarText).not.toContain("TODOS");
 
 			const toolResultHandler = h.handlers.get("tool_result");
 			expect(toolResultHandler).toBeDefined();

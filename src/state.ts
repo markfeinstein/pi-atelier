@@ -1,6 +1,6 @@
 import { isDeepStrictEqual } from "node:util";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { resolveWorkingLabels, selectWorkingLabel } from "./activity.js";
+import { selectWorkingPhrase } from "./activity.js";
 import { resolveDisplayLayers } from "./config.js";
 import { aggregateMetrics, type UsageMessage } from "./metrics.js";
 import type {
@@ -41,6 +41,16 @@ export interface RuntimeDependencies {
 	inspectWorkspace?(): Promise<WorkspacePulseInspection>;
 }
 
+export function createInertAtelierState(autoCompact: boolean | null = null): AtelierState {
+	return {
+		activity: "ready",
+		dirty: false,
+		workspacePulse: { status: "unavailable" },
+		metrics: aggregateMetrics([], { subscription: false, autoCompact }),
+		extensionStatuses: [],
+	};
+}
+
 export class AtelierRuntime {
 	readonly #pi: ExtensionAPI;
 	readonly #ctx: ExtensionContext;
@@ -77,15 +87,13 @@ export class AtelierRuntime {
 	/** State with no branch, workspace data, or usage history; context is included only when explicit. */
 	#inertState(context: ReturnType<ExtensionContext["getContextUsage"]> = undefined): AtelierState {
 		return {
-			activity: "ready",
-			dirty: false,
+			...createInertAtelierState(this.#autoCompact),
 			workspacePulse: { status: "inspecting" },
 			metrics: aggregateMetrics([], {
 				subscription: false,
 				autoCompact: this.#autoCompact,
 				...(context ? { context } : {}),
 			}),
-			extensionStatuses: [],
 		};
 	}
 
@@ -195,19 +203,15 @@ export class AtelierRuntime {
 
 	setConfig(config: AtelierConfig): void {
 		this.#config = config;
-		if (this.#state.activity === "working" && !resolveWorkingLabels(config.workingLabels)) {
-			const { workingLabel: _disabled, ...rest } = this.#state;
-			this.#state = rest;
-		}
 		this.#invalidate();
 	}
 
 	setActivity(activity: ActivityState): void {
 		if (this.#state.activity === activity) return;
-		const { workingLabel: _previous, ...rest } = this.#state;
-		const workingLabel =
-			activity === "working" ? selectWorkingLabel(this.#config.workingLabels, this.#random) : undefined;
-		this.#state = workingLabel ? { ...rest, activity, workingLabel } : { ...rest, activity };
+		this.#state =
+			activity === "working"
+				? { ...this.#state, activity, workingLabel: selectWorkingPhrase(this.#random()) }
+				: { ...this.#state, activity };
 		this.#invalidate();
 	}
 
