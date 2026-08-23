@@ -57,9 +57,13 @@ const DROP = {
 	context: Number.POSITIVE_INFINITY,
 } as const;
 
+const TERMINAL_ESCAPE_PATTERN =
+	/(?:\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u009d[^\u0007\u009c]*(?:\u0007|\u009c)|(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|\u001b[@-Z\\-_])/g;
+
 const sanitize = (text: string): string =>
 	text
-		.replace(/[\u0000-\u001f\u007f]/g, " ")
+		.replace(TERMINAL_ESCAPE_PATTERN, "")
+		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
 		.replace(/\s+/g, " ")
 		.trim();
 
