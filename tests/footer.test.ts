@@ -609,6 +609,23 @@ describe("footer", () => {
 		expect(oversized).not.toContain("xxxxxxxxxx");
 	});
 
+	it("strips terminal escape sequences from extension statuses", () => {
+		const line = renderFooterLine(
+			{
+				...state,
+				extensionStatuses: ["\u001b[38;2;196;167;231m🔌 MCP: 2 servers enabled\u001b[39m"],
+			},
+			DEFAULT_CONFIG,
+			plainTheme,
+			180,
+		);
+
+		expect(line).toContain("🔌 MCP: 2 servers enabled");
+		expect(line).not.toContain("[38;2;196;167;231m");
+		expect(line).not.toContain("[39m");
+		expect(line).not.toContain("\u001b");
+	});
+
 	it("generates each item at most once for duplicate configured categories", () => {
 		const line = renderFooterLine(
 			state,
