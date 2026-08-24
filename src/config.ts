@@ -502,11 +502,11 @@ export function mergeConfig(...inputs: unknown[]): ConfigLoadResult {
 	const config = cloneConfig(DEFAULT_CONFIG);
 	const warnings: string[] = [];
 	for (const input of inputs) applyNonDisplay(input, config, warnings);
-	const records = inputs.map(record).filter((item): item is Record<string, unknown> => !!item);
+	const [userRecord, projectRecord, sessionRecord] = inputs.map(record);
 	const displayLayers: DisplayLayerState = {
-		...(records[0] ? { user: records[0] } : {}),
-		...(records[1] ? { project: records[1] } : {}),
-		...(records[2] ? { session: records[2] } : {}),
+		...(userRecord ? { user: userRecord } : {}),
+		...(projectRecord ? { project: projectRecord } : {}),
+		...(sessionRecord ? { session: sessionRecord } : {}),
 	};
 	const resolved = resolveDisplayLayers(displayLayers);
 	const sidebar = resolveSidebarLayout(displayLayers);

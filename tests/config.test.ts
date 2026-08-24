@@ -81,12 +81,27 @@ describe("configuration", () => {
 	it("migrates retired Sidebar Context visibility to Usage", () => {
 		const result = validateConfig({
 			sidebarPanelLayout: [
+				{ id: "agent", visible: true },
 				{ id: "usage", visible: false },
 				{ id: "context", visible: true },
 			] as Array<{ id: string; visible: boolean }>,
 		});
 		expect(result.config.sidebarPanelLayout.map((entry) => entry.id)).not.toContain("context");
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
 		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "usage")?.visible).toBe(true);
+		expect(result.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("context")]));
+	});
+
+	it("preserves hidden retired Sidebar Context visibility when Usage is omitted", () => {
+		const result = validateConfig({
+			sidebarPanelLayout: [
+				{ id: "agent", visible: true },
+				{ id: "context", visible: false },
+			] as Array<{ id: string; visible: boolean }>,
+		});
+		expect(result.config.sidebarPanelLayout.map((entry) => entry.id)).not.toContain("context");
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "usage")?.visible).toBe(false);
 		expect(result.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("context")]));
 	});
 
@@ -169,6 +184,42 @@ describe("configuration", () => {
 		expect(result.displayProvenance.order).toBe("session");
 		expect(result.displayProvenance.visibility.brand).toBe("session");
 		expect(result.config.preset).toBe("custom");
+	});
+
+	it("preserves project display layer position when user config is omitted", () => {
+		const project = { density: "compact" };
+		const session = {
+			segmentLayout: [
+				{ id: "brand", visible: true },
+				{ id: "metrics", visible: true },
+			],
+		};
+		const result = mergeConfig(undefined, project, session);
+		expect(result.displayLayers).toEqual({ project, session });
+		expect(result.displayProvenance.density).toBe("project");
+		expect(result.displayProvenance.order).toBe("session");
+		expect(result.displayProvenance.visibility.brand).toBe("session");
+		expect(result.config.density).toBe("compact");
+		expect(result.config.segmentLayout[0]).toEqual({ id: "brand", visible: true });
+	});
+
+	it("preserves session display layer position when project config is not an object", () => {
+		const user = { density: "compact" };
+		const session = {
+			density: "comfortable",
+			segmentLayout: [
+				{ id: "activity", visible: true },
+				{ id: "metrics", visible: true },
+			],
+		};
+		const result = mergeConfig(user, "not an object", session);
+		expect(result.displayLayers).toEqual({ user, session });
+		expect(result.displayProvenance.density).toBe("session");
+		expect(result.displayProvenance.order).toBe("session");
+		expect(result.displayProvenance.visibility.activity).toBe("session");
+		expect(result.config.density).toBe("comfortable");
+		expect(result.config.segmentLayout[0]).toEqual({ id: "activity", visible: true });
+		expect(result.warnings).toContain("Configuration must be a JSON object");
 	});
 
 	it("keeps completion notifications as a global user preference", async () => {
