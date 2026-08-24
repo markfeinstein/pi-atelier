@@ -4,6 +4,7 @@ This changelog tracks the divergent `integration` line. Changes may be upstreame
 
 ## Unreleased
 
+- Restore inherited Pi theme colors in Sidebar values when `colorScheme` is set to `inherit`.
 - Restore working-label configuration, persisted session display/sidebar config, and title-cased Usage composition after the helper refactor.
 - Local maintenance: declare the permanent divergent integration-line policy, normal scoped package identity, release flow, contribution base, CI gate, and private `.plans/` handling.
 - Add a global **Sidebar on startup** setting that is saved to user configuration while preserving session-scoped Sidebar on/off controls.
