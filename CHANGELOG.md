@@ -4,6 +4,7 @@ This changelog tracks the divergent `integration` line. Changes may be upstreame
 
 ## Unreleased
 
+- Preserve global-only completion notification preferences and legacy Sidebar visibility fallbacks when layered config is malformed or omits lower layers.
 - Preserve retired Context panel visibility when migrating Sidebar layouts to Usage, and keep omitted configuration layers from shifting display precedence.
 - Restore inherited Pi theme colors in Sidebar values when `colorScheme` is set to `inherit`.
 - Restore working-label configuration, persisted session display/sidebar config, and title-cased Usage composition after the helper refactor.

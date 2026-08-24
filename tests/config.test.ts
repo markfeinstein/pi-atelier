@@ -111,6 +111,20 @@ describe("configuration", () => {
 		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
 	});
 
+	it("falls back to legacy Sidebar visibility when user layout is malformed", () => {
+		const result = validateConfig({
+			showSidebarAgent: false,
+			showSidebarTodos: false,
+			sidebarPanelLayout: "not an array",
+		});
+
+		expect(result.warnings).toContain("sidebarPanelLayout must be an array");
+		expect(result.config.showSidebarAgent).toBe(false);
+		expect(result.config.showSidebarTodos).toBe(false);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(false);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
+	});
+
 	it("applies named templates atomically before same-layer deviations", () => {
 		const named = validateConfig({ preset: "minimal" });
 		expect(named.config).toMatchObject({ preset: "minimal", density: "compact" });
@@ -232,6 +246,20 @@ describe("configuration", () => {
 			session: { completionNotifications: true },
 		});
 		expect(result.config.completionNotifications).toBe(false);
+	});
+
+	it("keeps completion notifications global-user-only when merging config layers", () => {
+		expect(
+			mergeConfig(
+				{ completionNotifications: false },
+				{ completionNotifications: true },
+				{ completionNotifications: true },
+			).config.completionNotifications,
+		).toBe(false);
+		expect(
+			mergeConfig({}, { completionNotifications: false }, { completionNotifications: false }).config
+				.completionNotifications,
+		).toBe(true);
 	});
 
 	it("lets a user Agent visibility preference win over trusted project and session values", async () => {

@@ -96,11 +96,12 @@ function resolveSidebarLayout(
 	const user = layers.user;
 	if (user && "sidebarPanelLayout" in user) {
 		const parsed = parseSidebarLayout(user.sidebarPanelLayout, warnings);
-		return {
-			layout: parsed ?? cloneSidebarLayout(base.sidebarPanelLayout),
-			warnings,
-			authoritative: true,
-		};
+		if (parsed)
+			return {
+				layout: parsed,
+				warnings,
+				authoritative: true,
+			};
 	}
 	const layout = cloneSidebarLayout(base.sidebarPanelLayout);
 	// Legacy Agent and TODOS visibility are global-user-only compatibility inputs.
@@ -514,6 +515,7 @@ export function mergeConfig(...inputs: unknown[]): ConfigLoadResult {
 	const global = cloneConfig(DEFAULT_CONFIG);
 	applyNonDisplay(inputs[0], global, []);
 	config.showSidebarOnStartup = global.showSidebarOnStartup;
+	config.completionNotifications = global.completionNotifications;
 	if (sidebar.authoritative) {
 		config.showSidebarAgent =
 			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
