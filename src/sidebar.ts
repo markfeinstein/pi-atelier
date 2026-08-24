@@ -141,8 +141,9 @@ const display = (value: string | undefined): string => {
 function properCase(text: string): string {
 	return sanitize(text)
 		.toLocaleLowerCase("en")
-		.replace(/(^|[\s/:._-])(\p{L})/gu, (_match, prefix: string, letter: string) =>
-			`${prefix}${letter.toLocaleUpperCase("en")}`,
+		.replace(
+			/(^|[\s/:._-])(\p{L})/gu,
+			(_match, prefix: string, letter: string) => `${prefix}${letter.toLocaleUpperCase("en")}`,
 		);
 }
 
@@ -266,7 +267,9 @@ function agentRows(
 	);
 	const model = valueRow(snapshot.modelId, palette, "primary");
 	const provider = snapshot.provider ? palette.paint("muted", providerCase(display(snapshot.provider))) : "";
-	const thinking = snapshot.thinkingLevel ? palette.paint("primary", properCase(display(snapshot.thinkingLevel))) : "";
+	const thinking = snapshot.thinkingLevel
+		? palette.paint("primary", properCase(display(snapshot.thinkingLevel)))
+		: "";
 	const access =
 		snapshot.modelId || snapshot.provider
 			? palette.paint(
