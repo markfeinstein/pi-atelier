@@ -311,8 +311,8 @@ describe("extension registration", () => {
 			{
 				sidebarPanelLayout: [
 					{ id: "vendor:queue", visible: true },
-					...Array.from({ length: 8 }, (_, index) => ({
-						id: ["agent", "activity", "alerts", "todos", "context", "workspace", "usage", "tools"][index],
+					...Array.from({ length: 7 }, (_, index) => ({
+						id: ["agent", "activity", "alerts", "todos", "usage", "workspace", "tools"][index],
 						visible: false,
 					})),
 				],
@@ -328,7 +328,7 @@ describe("extension registration", () => {
 				});
 				await command(h, "sidebar on");
 				const rendered = h.overlays.at(-1)?.component.render(44).join("\\n") ?? "";
-				expect(rendered).toContain("QUEUE");
+				expect(rendered).toContain("Queue");
 				expect(rendered).toContain("queued 2");
 			},
 		);
@@ -739,7 +739,7 @@ describe("extension registration", () => {
 		expect(staleSidebar).not.toContain("Test session");
 		expect(staleSidebar).not.toContain("Retired TODO");
 		expect(staleSidebar).not.toContain("retired extension failed");
-		expect(staleSidebar).not.toContain("TODOS");
+		expect(staleSidebar).not.toContain("Todos");
 		expect(oldSessionManager.getBranch).not.toHaveBeenCalled();
 		expect(oldSessionManager.getSessionName).not.toHaveBeenCalled();
 		expect(oldSessionManager.getSessionFile).not.toHaveBeenCalled();
@@ -1044,7 +1044,7 @@ describe("extension registration", () => {
 		expect(replacementSidebar).toContain("Post-shutdown session");
 		expect(replacementSidebar).not.toContain("Shutdown stale TODO");
 		expect(replacementSidebar).not.toContain("shutdown-stale.ts");
-		expect(replacementSidebar).not.toContain("TODOS");
+		expect(replacementSidebar).not.toContain("Todos");
 	});
 
 	it("does not retain published state when initialization fails", async () => {
@@ -1127,7 +1127,7 @@ describe("extension registration", () => {
 		const recoveredSidebar = renderOverlayText(h, h.overlays.length - 1);
 		expect(recoveredSidebar).toContain("Recovered session");
 		expect(recoveredSidebar).not.toContain("Failure stale TODO");
-		expect(recoveredSidebar).not.toContain("TODOS");
+		expect(recoveredSidebar).not.toContain("Todos");
 	});
 
 	it("cancels pending system notifications during shutdown", async () => {
@@ -1499,8 +1499,8 @@ describe("extension registration", () => {
 				const rendered = workspace?.render(120).join("\n") ?? "";
 				expect(rendered).toContain("vendor:missing");
 
-				// Two display rows, nine segments, and three actions precede configured panels.
-				for (let index = 0; index < 14 + 9; index += 1) workspace?.handleInput("\u001b[B");
+				// Two display rows, nine segments, three actions, the unavailable panel, and seven built-ins precede the contributed panel.
+				for (let index = 0; index < 14 + 8; index += 1) workspace?.handleInput("\u001b[B");
 				const focusedRendered = workspace?.render(120).join("\n") ?? "";
 				expect(focusedRendered).toContain("Queue title");
 				expect(focusedRendered).toContain("unavailable");
@@ -1522,9 +1522,8 @@ describe("extension registration", () => {
 					"activity",
 					"alerts",
 					"todos",
-					"context",
-					"workspace",
 					"usage",
+					"workspace",
 					"tools",
 					"vendor:queue",
 				]);
@@ -1709,7 +1708,7 @@ describe("extension registration", () => {
 		);
 
 		const sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
-		expect(sidebarText).toContain("ACTIVITY");
+		expect(sidebarText).toContain("Activity");
 		expect(sidebarText).toContain("Turn 3");
 		expect(sidebarText).toContain("running");
 		expect(sidebarText).toContain("bash");
@@ -1984,7 +1983,7 @@ describe("extension registration", () => {
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 		await command(h, "sidebar on");
 		const replacementText = h.overlays[1]?.component.render(44).join("\n") ?? "";
-		expect(replacementText).toContain("ACTIVITY");
+		expect(replacementText).toContain("Activity");
 		expect(replacementText).toContain("TTFT ~ · TPS ~");
 		expect(replacementText).not.toContain("old.ts");
 
@@ -2020,7 +2019,7 @@ describe("extension registration", () => {
 
 		const text = h.overlays[0]?.component.render(44).join("\n") ?? "";
 		expect(text).toContain("Working");
-		expect(text).toContain("ACTIVITY");
+		expect(text).toContain("Activity");
 		expect(text).toContain("Turn 1");
 	});
 
@@ -2056,7 +2055,7 @@ describe("extension registration", () => {
 			const activeRenderCount = h.overlays[1]?.requestRender.mock.calls.length ?? 0;
 			const activeText = h.overlays[1]?.component.render(44).join("\n") ?? "";
 			expect(activeText).toContain("Replacement session");
-			expect(activeText).toContain("ACTIVITY");
+			expect(activeText).toContain("Activity");
 			expect(activeText).toContain("Turn 7");
 			expect(activeText).toContain("running");
 			expect(activeText).toContain("bash");
@@ -2214,14 +2213,14 @@ describe("sidebar todos integration", () => {
 			progress: "1/3",
 			texts: ["Done", "Working", "Pending"],
 		},
-	])("shows TODOS panel reconstructed from $name branch entries", async ({ details, progress, texts }) => {
+	])("shows Todos panel reconstructed from $name branch entries", async ({ details, progress, texts }) => {
 		const h = harness();
 		h.ctx.sessionManager.getBranch.mockReturnValue([todoBranchEntry(details)]);
 		await start(h);
 		await command(h, "sidebar on");
 
 		const sidebarText = renderOverlayText(h);
-		expect(sidebarText).toContain("TODOS");
+		expect(sidebarText).toContain("Todos");
 		expect(sidebarText).toContain(progress);
 		for (const text of texts) expect(sidebarText).toContain(text);
 	});
@@ -2268,7 +2267,7 @@ describe("sidebar todos integration", () => {
 		await sessionTreeHandler!({ type: "session_tree", newLeafId: null, oldLeafId: "second" }, h.ctx);
 		sidebarText = sidebarOverlay.component.render(44).join("\n");
 		expect(sidebarText).not.toContain("Second branch task");
-		expect(sidebarText).not.toContain("TODOS");
+		expect(sidebarText).not.toContain("Todos");
 	});
 
 	it("filters out tasks with unknown statuses from sidebar", async () => {
@@ -2287,7 +2286,7 @@ describe("sidebar todos integration", () => {
 		await command(h, "sidebar on");
 
 		const sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
-		expect(sidebarText).toContain("TODOS");
+		expect(sidebarText).toContain("Todos");
 		expect(sidebarText).toContain("0/1");
 		expect(sidebarText).toContain("Valid");
 		expect(sidebarText).not.toContain("Deleted");
@@ -2375,7 +2374,7 @@ describe("sidebar todos integration", () => {
 		expect(h.overlays.at(-1)).toBeDefined();
 		const sidebarText = h.overlays.at(-1)!.component.render(44).join("\n");
 		expect(sidebarText).not.toContain("Stale task");
-		expect(sidebarText).not.toContain("TODOS");
+		expect(sidebarText).not.toContain("Todos");
 	});
 
 	it("clears cached todos when all task statuses are filtered out", async () => {
@@ -2402,10 +2401,10 @@ describe("sidebar todos integration", () => {
 		expect(h.overlays.at(-1)).toBeDefined();
 		const sidebarText = h.overlays.at(-1)!.component.render(44).join("\n");
 		expect(sidebarText).not.toContain("Stale task");
-		expect(sidebarText).not.toContain("TODOS");
+		expect(sidebarText).not.toContain("Todos");
 	});
 
-	it("persists hidden Agent independently from populated TODOS across session reload", async () => {
+	it("persists hidden Agent independently from populated Todos across session reload", async () => {
 		await withPersistedUserConfig({ showSidebarAgent: false }, async () => {
 			const h = harness();
 			h.ctx.sessionManager.getBranch.mockReturnValue([
@@ -2421,8 +2420,8 @@ describe("sidebar todos integration", () => {
 			await start(h);
 			expect(h.overlays[0]).toBeDefined();
 			const initialSidebar = h.overlays[0]!.component.render(44).join("\n");
-			expect(initialSidebar).not.toContain("AGENT");
-			expect(initialSidebar).toContain("TODOS");
+			expect(initialSidebar).not.toContain("Agent");
+			expect(initialSidebar).toContain("Todos");
 			expect(initialSidebar).toContain("1/2");
 			expect(initialSidebar).toContain("Visible TODO");
 
@@ -2430,14 +2429,14 @@ describe("sidebar todos integration", () => {
 			expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 			expect(h.overlays[1]).toBeDefined();
 			const reloadedSidebar = h.overlays[1]!.component.render(44).join("\n");
-			expect(reloadedSidebar).not.toContain("AGENT");
-			expect(reloadedSidebar).toContain("TODOS");
+			expect(reloadedSidebar).not.toContain("Agent");
+			expect(reloadedSidebar).toContain("Todos");
 			expect(reloadedSidebar).toContain("1/2");
 			expect(reloadedSidebar).toContain("Visible TODO");
 		});
 	});
 
-	it("hides TODOS panel and preserves full output when persisted showSidebarTodos is false", async () => {
+	it("hides Todos panel and preserves full output when persisted showSidebarTodos is false", async () => {
 		await withPersistedUserConfig({ showSidebarTodos: false }, async () => {
 			const h = harness();
 			h.ctx.sessionManager.getBranch.mockReturnValue([
@@ -2448,7 +2447,7 @@ describe("sidebar todos integration", () => {
 
 			expect(h.overlays[0]).toBeDefined();
 			const sidebarText = h.overlays[0]!.component.render(44).join("\n");
-			expect(sidebarText).not.toContain("TODOS");
+			expect(sidebarText).not.toContain("Todos");
 
 			const toolResultHandler = h.handlers.get("tool_result");
 			expect(toolResultHandler).toBeDefined();
