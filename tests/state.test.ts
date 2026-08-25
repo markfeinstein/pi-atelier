@@ -218,7 +218,7 @@ describe("AtelierRuntime", () => {
 		expect(state.workspacePulse).toEqual({ status: "unavailable" });
 	});
 
-	it("selects one stable playful label when a work cycle starts", () => {
+	it("selects one stable label when a work cycle starts", () => {
 		const random = vi.fn().mockReturnValue(0.5);
 		const { runtime, requestRender } = createRuntime(undefined, random);
 		requestRender.mockClear();
