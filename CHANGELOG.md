@@ -4,12 +4,26 @@ This changelog tracks the divergent `integration` line. Changes may be upstreame
 
 ## Unreleased
 
+- Wait to run Workspace Pulse Git inspections until Pi considers the project trusted.
 - Restore inherited Pi theme colors in Sidebar values when `colorScheme` is set to `inherit`.
 - Restore working-label configuration, persisted session display/sidebar config, and title-cased Usage composition after the helper refactor.
 - Local maintenance: declare the permanent divergent integration-line policy, normal scoped package identity, release flow, contribution base, CI gate, and private `.plans/` handling.
-- Add a global **Sidebar on startup** setting that is saved to user configuration while preserving session-scoped Sidebar on/off controls.
 - Add temporary Sidebar interaction mouse support: `Ctrl+Shift+R` now supports divider dragging, clicking the Tools disclosure row, and session-scoped widget body collapse from panel crown clicks in regular and fullscreen TUI modes while keeping mouse reporting off outside the temporary mode.
+
+## 0.8.2 — 2026-08-19
+
+- Coalesce and serialize Workspace Pulse inspection requests so short Turns avoid duplicate Git work and overlapping inspections no longer run concurrently.
+- Preserve live tool-driven Workspace Pulse updates while guaranteeing a fresh inspection at Turn end and preventing retired sessions from publishing stale results.
+
+## 0.8.1 — 2026-08-12
+
+- Preserve fullscreen transcript mouse-wheel scrolling after Sidebar resize and visibility changes by leaving Pi's persistent mouse reporting enabled.
+
+## 0.8.0 — 2026-08-07
+
+- Add a global **Sidebar on startup** setting that is saved to user configuration while preserving session-scoped Sidebar on/off controls.
 - Harden Atelier lifecycle teardown for session-owned overlays, exception-safe cleanup, stale Sidebar snapshots, candidate startup failures, and deferred Display saves.
+- Simplify Sidebar context rendering, contributed-panel validation, and Sidebar undo bookkeeping without changing behavior.
 
 ## 0.7.2 — 2026-08-06
 

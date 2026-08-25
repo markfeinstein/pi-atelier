@@ -3,7 +3,7 @@ import { basename } from "node:path";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, type OverlayHandle, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ThemeLike } from "./footer.js";
-import { formatTokens } from "./metrics.js";
+import { aggregateMetrics, formatTokens } from "./metrics.js";
 import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.js";
 import {
 	EMPTY_RUN_ACTIVITY,
@@ -25,7 +25,13 @@ import {
 } from "./sidebar-panels.js";
 import type { SidebarAction, SidebarFrame, SidebarHitRegion } from "./sidebar-interaction.js";
 import { createSplitPaneController, type SplitPaneController } from "./split-pane.js";
-import type { AtelierConfig, AtelierState, NormalizedTodo, WorkspacePulseState } from "./types.js";
+import {
+	DEFAULT_CONFIG,
+	type AtelierConfig,
+	type AtelierState,
+	type NormalizedTodo,
+	type WorkspacePulseState,
+} from "./types.js";
 import type { WorkspacePulseData } from "./workspace-pulse.js";
 
 export type { SidebarAction, SidebarFrame, SidebarHitRegion } from "./sidebar-interaction.js";
@@ -1342,7 +1348,79 @@ export interface SidebarControllerOptions {
 	onError?(error: unknown): void;
 }
 
+interface RetirableSidebarBinding {
+	getSnapshot(): SidebarSnapshot;
+	getConfig(): AtelierConfig;
+	isResizing(): boolean;
+	setResizing(reader: () => boolean): void;
+	detach(): void;
+}
+
+function createDetachedSidebarSnapshot(cwd: string): SidebarSnapshot {
+	return buildSidebarSnapshot({
+		state: {
+			activity: "ready",
+			dirty: false,
+			workspacePulse: { status: "unavailable" },
+			metrics: aggregateMetrics([], { subscription: false, autoCompact: null }),
+			extensionStatuses: [],
+		},
+		cwd,
+		branchEntryCount: 0,
+		activeToolCount: 0,
+		availableToolCount: 0,
+		activeToolNames: [],
+		extensionStatuses: [],
+		todos: [],
+		sidebarPanels: [],
+	});
+}
+
+function cloneSidebarSnapshot(snapshot: SidebarSnapshot): SidebarSnapshot {
+	return structuredClone(snapshot);
+}
+
+function cloneSidebarConfig(config: AtelierConfig): AtelierConfig {
+	return structuredClone(config);
+}
+
+function createRetirableSidebarBinding(options: SidebarControllerOptions): RetirableSidebarBinding {
+	let readSnapshot: (() => SidebarSnapshot) | undefined = options.getSnapshot;
+	let readConfig: (() => AtelierConfig) | undefined = options.getConfig;
+	let readResizing: (() => boolean) | undefined;
+	let snapshot = createDetachedSidebarSnapshot(typeof options.ctx.cwd === "string" ? options.ctx.cwd : "");
+	let config = cloneSidebarConfig(DEFAULT_CONFIG);
+	return {
+		getSnapshot: () => (readSnapshot ? readSnapshot() : snapshot),
+		getConfig: () => (readConfig ? readConfig() : config),
+		isResizing: () => readResizing?.() ?? false,
+		setResizing: (reader) => {
+			if (readSnapshot) readResizing = reader;
+		},
+		detach: () => {
+			if (readSnapshot) {
+				try {
+					snapshot = cloneSidebarSnapshot(readSnapshot());
+				} catch {
+					// The inert snapshot is already detached from the retired runtime.
+				}
+			}
+			if (readConfig) {
+				try {
+					config = cloneSidebarConfig(readConfig());
+				} catch {
+					// Keep the last plain configuration snapshot.
+				}
+			}
+			readSnapshot = undefined;
+			readConfig = undefined;
+			readResizing = undefined;
+		},
+	};
+}
+
 export function createSidebarController(options: SidebarControllerOptions): SidebarController {
+	const binding = createRetirableSidebarBinding(options);
 	let enabled = false;
 	let disposed = false;
 	let generation = 0;
@@ -1390,6 +1468,8 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 		...(options.onWarning ? { onWarning: options.onWarning } : {}),
 		...(options.onError ? { onError: options.onError } : {}),
 	});
+
+	binding.setResizing(split.isResizing);
 
 	const stopAnimation = () => {
 		if (!animationTimer) return;
@@ -1474,10 +1554,10 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 						}
 					}
 					return createSidebarComponent({
-						getSnapshot: options.getSnapshot,
-						getConfig: options.getConfig,
+						getSnapshot: binding.getSnapshot,
+						getConfig: binding.getConfig,
 						getHeight: () => tui.terminal.rows,
-						isResizing: split.isResizing,
+						isResizing: binding.isResizing,
 						onFrame: (frame) => split.setSidebarHitRegions(frame.hitRegions),
 						getCollapsedPanelIds: () => collapsedPanelIds,
 						theme: theme as unknown as ThemeLike,
@@ -1541,6 +1621,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 			if (disposed) return;
 			disposed = true;
 			hide();
+			binding.detach();
 			safely(split.dispose);
 		},
 	};
