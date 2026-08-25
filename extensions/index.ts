@@ -136,6 +136,7 @@ export default function atelierExtension(
 	let shortcutRegistered = false;
 	let resizeShortcutRegistered = false;
 	let lifecycleToken: LifecycleToken = { id: 0, initializingSessionManager: undefined };
+	let sidebarToolNamesSaveQueue: Promise<void> = Promise.resolve();
 
 	/** Retires the current lifecycle and records which initialization, if any, is now in flight. */
 	function startLifecycleGeneration(
@@ -346,17 +347,28 @@ export default function atelierExtension(
 		ctx: ExtensionContext,
 		visible: boolean | undefined,
 		targetSession: ActiveSession,
+		options: { notifySuccess?: boolean } = {},
 	): Promise<void> {
 		const { runtime: targetRuntime } = targetSession;
+		const notifySuccess = options.notifySuccess ?? true;
 		const next = visible ?? !targetRuntime.getConfig().showSidebarToolNames;
 		if (targetRuntime.getConfig().showSidebarToolNames !== next) {
 			targetRuntime.setConfig({ ...targetRuntime.getConfig(), showSidebarToolNames: next });
 		}
 		try {
-			await lifecycleGuardedSavePatch(targetSession)(join(getAgentDir(), "pi-atelier.json"), {
-				showSidebarToolNames: next,
-			});
-			ctx.ui.notify(`Sidebar tool list ${next ? "expanded" : "collapsed"}`, "info");
+			const save = sidebarToolNamesSaveQueue
+				.catch(() => undefined)
+				.then(() =>
+					lifecycleGuardedSavePatch(targetSession)(join(getAgentDir(), "pi-atelier.json"), {
+						showSidebarToolNames: next,
+					}),
+				);
+			sidebarToolNamesSaveQueue = save.then(
+				() => undefined,
+				() => undefined,
+			);
+			await save;
+			if (notifySuccess) ctx.ui.notify(`Sidebar tool list ${next ? "expanded" : "collapsed"}`, "info");
 		} catch (error) {
 			ctx.ui.notify(
 				`Sidebar tool list changed for this session but could not be saved: ${
@@ -669,6 +681,13 @@ export default function atelierExtension(
 					return getSidebarSnapshot(candidateSession);
 				},
 				getConfig: () => candidateRuntime.getConfig(),
+				onSidebarAction: (action) => {
+					if (action.type === "toggle-tool-names" && candidateSession) {
+						void setSidebarToolNames(initializationContext, undefined, candidateSession, {
+							notifySuccess: false,
+						});
+					}
+				},
 				colorEnabled: !("NO_COLOR" in process.env),
 				shouldAnimate: () =>
 					candidateSession !== undefined &&

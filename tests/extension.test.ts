@@ -37,6 +37,9 @@ const execResult = (stdout: string, code = 0) => ({
 	killed: false,
 });
 
+const mousePress = (x: number, y: number) => `\u001b[<0;${x};${y}M`;
+const mouseRelease = (x: number, y: number) => `\u001b[<0;${x};${y}m`;
+
 function harness(
 	mode: "tui" | "print" = "tui",
 	notificationPlatform: NodeJS.Platform = "linux",
@@ -538,6 +541,28 @@ describe("extension registration", () => {
 			showSidebarToolNames: false,
 		});
 		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Sidebar tool list collapsed", "info");
+	});
+
+	it("toggles tool-name details from a temporary sidebar mouse click", async () => {
+		const h = harness();
+		await start(h);
+		const overlay = h.overlays[0];
+		const lines = overlay?.component.render(44) ?? [];
+		const toolsY = lines.findIndex((line: string) => line.includes("Tools")) + 2;
+		expect(toolsY).toBeGreaterThan(1);
+
+		await h.shortcutHandlers.get("ctrl+shift+r")?.(h.ctx);
+		const sidebarStartX = 120 - 44 + 1;
+		h.terminalInput?.(mousePress(sidebarStartX + 8, toolsY));
+		h.terminalInput?.(mouseRelease(sidebarStartX + 8, toolsY));
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(h.saveConfigPatch).toHaveBeenLastCalledWith(expect.stringContaining("pi-atelier.json"), {
+			showSidebarToolNames: true,
+		});
+		expect(overlay?.component.render(44).join("\n")).toContain("read");
+		expect(h.ctx.ui.notify).not.toHaveBeenCalledWith("Sidebar tool list expanded", "info");
 	});
 
 	it.each(["sidebar maybe", "sidebar on extra"])("warns for invalid syntax: %s", async (args) => {

@@ -23,9 +23,12 @@ import {
 	type SidebarPanelRole,
 	sanitizeSidebarPanelText,
 } from "./sidebar-panels.js";
+import type { SidebarAction, SidebarFrame, SidebarHitRegion } from "./sidebar-interaction.js";
 import { createSplitPaneController, type SplitPaneController } from "./split-pane.js";
 import type { AtelierConfig, AtelierState, NormalizedTodo, WorkspacePulseState } from "./types.js";
 import type { WorkspacePulseData } from "./workspace-pulse.js";
+
+export type { SidebarAction, SidebarFrame, SidebarHitRegion } from "./sidebar-interaction.js";
 
 export type {
 	SidebarPanelContribution,
@@ -186,6 +189,7 @@ function panelRows(
 	theme: ThemeLike,
 	role: PaletteRole,
 	jewel: "✦" | "✧",
+	collapsed = false,
 ): string[] {
 	const safeWidth = Math.max(4, Math.trunc(width));
 	const innerWidth = Math.max(0, safeWidth - 4);
@@ -197,6 +201,7 @@ function panelRows(
 	const top = `${palette.paint(role, crownPrefix)}${theme.bold(
 		palette.paint(role, safeTitle),
 	)} ${palette.paint(role, `${crownFill}╮`)}`;
+	if (collapsed) return [top, ""];
 	const body = rows.map((row) => {
 		const content = padToWidth(row, innerWidth);
 		return `${palette.paint("dim", "│")} ${content} ${palette.paint("dim", "│")}`;
@@ -643,33 +648,59 @@ interface SidebarGroup {
 	panelRole?: PaletteRole;
 	panelJewel?: "✦" | "✧";
 	rows: string[];
+	rowActions?: Array<SidebarAction | undefined>;
 	required: boolean;
 	dropRank: number;
 }
 
-function renderGroups(
+function regionForRow(
+	action: SidebarAction | undefined,
+	width: number,
+	y: number,
+): SidebarHitRegion | undefined {
+	if (!action) return undefined;
+	return { action, x1: 2, x2: width + 2, y1: y, y2: y, enabled: true };
+}
+
+function renderGroupsFrame(
 	groups: readonly SidebarGroup[],
 	width: number,
 	palette: AtelierPalette,
 	theme: ThemeLike,
-): string[] {
+	collapsedPanelIds: ReadonlySet<string> = new Set(),
+): { rows: string[]; hitRegions: SidebarHitRegion[] } {
 	const rendered: string[] = [];
+	const hitRegions: SidebarHitRegion[] = [];
 	for (let index = 0; index < groups.length; ) {
 		const group = groups[index];
 		if (!group) break;
 		if (!group.panel) {
-			rendered.push(...group.rows);
+			for (let rowIndex = 0; rowIndex < group.rows.length; rowIndex += 1) {
+				rendered.push(group.rows[rowIndex] ?? "");
+				const region = regionForRow(group.rowActions?.[rowIndex], width, rendered.length);
+				if (region) hitRegions.push(region);
+			}
 			index += 1;
 			continue;
 		}
 
 		const rows: string[] = [];
+		const rowActions: Array<SidebarAction | undefined> = [];
 		let next = index;
 		while (groups[next]?.panel === group.panel && groups[next]?.panelId === group.panelId) {
-			rows.push(...(groups[next]?.rows ?? []));
+			const nextGroup = groups[next];
+			if (nextGroup) {
+				rows.push(...nextGroup.rows);
+				for (let rowIndex = 0; rowIndex < nextGroup.rows.length; rowIndex += 1) {
+					rowActions.push(nextGroup.rowActions?.[rowIndex]);
+				}
+			}
 			next += 1;
 		}
 		if (rows.length > 0) {
+			const panelStartY = rendered.length + 1;
+			const panelId = group.panelId;
+			const collapsed = panelId !== undefined && collapsedPanelIds.has(panelId);
 			rendered.push(
 				...panelRows(
 					group.panelTitle ?? group.panel,
@@ -679,12 +710,33 @@ function renderGroups(
 					theme,
 					group.panelRole ?? "accent",
 					group.panelJewel ?? "✦",
+					collapsed,
 				),
 			);
+			if (panelId && panelId !== "__empty__") {
+				const region = regionForRow({ type: "toggle-panel-body", panelId }, width, panelStartY);
+				if (region) hitRegions.push(region);
+			}
+			if (!collapsed) {
+				for (let rowIndex = 0; rowIndex < rowActions.length; rowIndex += 1) {
+					const region = regionForRow(rowActions[rowIndex], width, panelStartY + 1 + rowIndex);
+					if (region) hitRegions.push(region);
+				}
+			}
 		}
 		index = next;
 	}
-	return rendered;
+	return { rows: rendered, hitRegions };
+}
+
+function renderGroups(
+	groups: readonly SidebarGroup[],
+	width: number,
+	palette: AtelierPalette,
+	theme: ThemeLike,
+	collapsedPanelIds: ReadonlySet<string> = new Set(),
+): string[] {
+	return renderGroupsFrame(groups, width, palette, theme, collapsedPanelIds).rows;
 }
 
 function panelIdForTitle(title: string): string | undefined {
@@ -958,9 +1010,10 @@ function composeGroups(
 	width: number,
 	palette: AtelierPalette,
 	theme: ThemeLike,
+	collapsedPanelIds: ReadonlySet<string> = new Set(),
 ): SidebarGroup[] {
 	let candidate = groups.filter((group) => group.rows.length > 0);
-	while (renderGroups(candidate, width, palette, theme).length > height) {
+	while (renderGroups(candidate, width, palette, theme, collapsedPanelIds).length > height) {
 		let dropIndex = -1;
 		let dropRank = Number.POSITIVE_INFINITY;
 		for (const [index, group] of candidate.entries()) {
@@ -977,7 +1030,11 @@ function composeGroups(
 	return candidate;
 }
 
-export function renderSidebarLines(
+export interface SidebarRenderOptions {
+	collapsedPanelIds?: ReadonlySet<string>;
+}
+
+export function renderSidebarFrame(
 	snapshot: SidebarSnapshot,
 	config: AtelierConfig,
 	theme: ThemeLike,
@@ -986,14 +1043,16 @@ export function renderSidebarLines(
 	colorEnabled = true,
 	now = Date.now(),
 	resizing = false,
-): string[] {
+	options: SidebarRenderOptions = {},
+): SidebarFrame {
 	const palette = createPalette(theme, colorEnabled, config.colorScheme);
 	const safeWidth = Math.max(0, Math.trunc(width));
 	const safeHeight = Math.max(0, Math.trunc(height));
-	if (safeWidth <= 0 || safeHeight <= 0) return [];
+	if (safeWidth <= 0 || safeHeight <= 0) return { lines: [], hitRegions: [] };
 	const contentWidth = Math.max(0, safeWidth - 2);
 	const panelContentWidth = Math.max(0, contentWidth - 4);
 	const layout = sidebarLayout(safeWidth, config);
+	const collapsedPanelIds = options.collapsedPanelIds ?? new Set<string>();
 	const toolNameRows = layout.showToolNames ? activeToolNameRows(snapshot, panelContentWidth, palette) : [];
 	const workspace = workspaceRows(snapshot, layout, palette);
 	const groups: SidebarGroup[] = [
@@ -1001,7 +1060,7 @@ export function renderSidebarLines(
 			? [
 					{
 						name: "resize",
-						rows: [palette.paint("warning", "Resize · drag divider"), ""],
+						rows: [palette.paint("warning", "Sidebar · click controls · drag divider"), ""],
 						required: true,
 						dropRank: Number.POSITIVE_INFINITY,
 					},
@@ -1107,6 +1166,7 @@ export function renderSidebarLines(
 			panel: "TOOLS",
 			panelRole: "cache",
 			rows: toolsStatusRows(snapshot, layout.showToolNames, panelContentWidth, palette),
+			rowActions: layout.compact ? [] : [{ type: "toggle-tool-names" }],
 			required: false,
 			dropRank: 10,
 		},
@@ -1170,18 +1230,32 @@ export function renderSidebarLines(
 			dropRank: Number.POSITIVE_INFINITY,
 		});
 	}
-	return renderDock(
-		renderGroups(
-			composeGroups(ordered, safeHeight, contentWidth, palette, theme),
-			contentWidth,
-			palette,
-			theme,
-		),
-		safeWidth,
-		safeHeight,
+	const groupFrame = renderGroupsFrame(
+		composeGroups(ordered, safeHeight, contentWidth, palette, theme, collapsedPanelIds),
+		contentWidth,
 		palette,
-		resizing,
+		theme,
+		collapsedPanelIds,
 	);
+	return {
+		lines: renderDock(groupFrame.rows, safeWidth, safeHeight, palette, resizing),
+		hitRegions: groupFrame.hitRegions,
+	};
+}
+
+export function renderSidebarLines(
+	snapshot: SidebarSnapshot,
+	config: AtelierConfig,
+	theme: ThemeLike,
+	width: number,
+	height: number,
+	colorEnabled = true,
+	now = Date.now(),
+	resizing = false,
+	options: SidebarRenderOptions = {},
+): string[] {
+	return renderSidebarFrame(snapshot, config, theme, width, height, colorEnabled, now, resizing, options)
+		.lines;
 }
 
 export interface SidebarComponentOptions {
@@ -1189,6 +1263,8 @@ export interface SidebarComponentOptions {
 	getConfig(): AtelierConfig;
 	getHeight(): number;
 	isResizing?(): boolean;
+	onFrame?(frame: SidebarFrame): void;
+	getCollapsedPanelIds?(): ReadonlySet<string>;
 	theme: ThemeLike;
 	colorEnabled?: boolean;
 }
@@ -1218,7 +1294,8 @@ export function createSidebarComponent(options: SidebarComponentOptions): Compon
 			let resizing = false;
 			try {
 				resizing = options.isResizing?.() ?? false;
-				return renderSidebarLines(
+				const collapsedPanelIds = options.getCollapsedPanelIds?.();
+				const frame = renderSidebarFrame(
 					options.getSnapshot(),
 					options.getConfig(),
 					options.theme,
@@ -1227,9 +1304,14 @@ export function createSidebarComponent(options: SidebarComponentOptions): Compon
 					options.colorEnabled ?? true,
 					Date.now(),
 					resizing,
+					collapsedPanelIds ? { collapsedPanelIds } : {},
 				);
+				options.onFrame?.(frame);
+				return frame.lines;
 			} catch (error) {
-				return renderSidebarError(error, width, height, resizing);
+				const lines = renderSidebarError(error, width, height, resizing);
+				options.onFrame?.({ lines, hitRegions: [] });
+				return lines;
 			}
 		},
 		invalidate() {},
@@ -1252,6 +1334,7 @@ export interface SidebarControllerOptions {
 	ctx: ExtensionContext;
 	getSnapshot(): SidebarSnapshot;
 	getConfig(): AtelierConfig;
+	onSidebarAction?(action: SidebarAction): void;
 	colorEnabled?: boolean;
 	shouldAnimate?(): boolean;
 	animationIntervalMs?: number;
@@ -1268,6 +1351,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 	let splitRequestRender: (() => void) | undefined;
 	let overlayHandle: OverlayHandle | undefined;
 	let animationTimer: ReturnType<typeof setInterval> | undefined;
+	const collapsedPanelIds = new Set<string>();
 	const animationIntervalMs = Math.max(1, Math.trunc(options.animationIntervalMs ?? 1_000));
 
 	const reportError = (error: unknown) => {
@@ -1293,6 +1377,15 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 		onResizeChange: () => {
 			safely(() => requestOverlayRender?.());
 			safely(() => splitRequestRender?.());
+		},
+		onSidebarAction: (action) => {
+			if (action.type === "toggle-panel-body") {
+				if (collapsedPanelIds.has(action.panelId)) collapsedPanelIds.delete(action.panelId);
+				else collapsedPanelIds.add(action.panelId);
+				safely(() => requestOverlayRender?.());
+				return;
+			}
+			options.onSidebarAction?.(action);
 		},
 		...(options.onWarning ? { onWarning: options.onWarning } : {}),
 		...(options.onError ? { onError: options.onError } : {}),
@@ -1328,6 +1421,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 		enabled = false;
 		generation += 1;
 		stopAnimation();
+		split.setSidebarHitRegions([]);
 		safely(split.cancelResize);
 		const close = closeOverlay;
 		const handle = overlayHandle;
@@ -1384,6 +1478,8 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 						getConfig: options.getConfig,
 						getHeight: () => tui.terminal.rows,
 						isResizing: split.isResizing,
+						onFrame: (frame) => split.setSidebarHitRegions(frame.hitRegions),
+						getCollapsedPanelIds: () => collapsedPanelIds,
 						theme: theme as unknown as ThemeLike,
 						...(options.colorEnabled === undefined ? {} : { colorEnabled: options.colorEnabled }),
 					});

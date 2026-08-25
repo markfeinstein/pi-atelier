@@ -11,6 +11,7 @@ import {
 	isSidebarPanelRequestId,
 	isSidebarPanelTextWithinRawLimit,
 	registerSidebarPanel,
+	renderSidebarFrame,
 	renderSidebarLines,
 	SIDEBAR_PANEL_EVENT_CHANNEL,
 	SIDEBAR_PANEL_MAX_ID_CHARS,
@@ -1893,6 +1894,77 @@ describe("sidebar snapshot and layout", () => {
 		expect(expandedConfig.showSidebarToolNames).toBe(true);
 	});
 
+	it("publishes a Tools disclosure hit region from the rendered frame", () => {
+		const toolsSnapshot = buildSidebarSnapshot({
+			state: { ...state, extensionStatuses: [] },
+			cwd: "/tmp/project",
+			branchEntryCount: 6,
+			activeToolCount: 3,
+			availableToolCount: 7,
+			activeToolNames: ["read", "bash", "edit"],
+			extensionStatuses: [],
+		});
+		const frame = renderSidebarFrame(toolsSnapshot, DEFAULT_CONFIG, theme, 44, 36, false);
+		const rows = contentRows(frame.lines);
+		const toolsStatusY = rows.indexOf("Tools") + 2;
+
+		expect(frame.hitRegions).toContainEqual({
+			action: { type: "toggle-tool-names" },
+			x1: 2,
+			x2: 44,
+			y1: toolsStatusY,
+			y2: toolsStatusY,
+			enabled: true,
+		});
+
+		const compact = renderSidebarFrame(toolsSnapshot, DEFAULT_CONFIG, theme, 39, 36, false);
+		expect(compact.hitRegions).not.toContainEqual(
+			expect.objectContaining({ action: { type: "toggle-tool-names" } }),
+		);
+	});
+
+	it("omits stale hit regions when Tools is dropped by the height budget", () => {
+		const frame = renderSidebarFrame(snapshot(), DEFAULT_CONFIG, theme, 44, 12, false);
+
+		expect(contentRows(frame.lines)).not.toContain("Tools");
+		expect(frame.hitRegions).not.toContainEqual(
+			expect.objectContaining({ action: { type: "toggle-tool-names" } }),
+		);
+		expect(frame.hitRegions).not.toContainEqual(
+			expect.objectContaining({ action: { type: "toggle-panel-body", panelId: "tools" } }),
+		);
+	});
+
+	it("publishes panel crown hit regions and hides collapsed widget bodies", () => {
+		const frame = renderSidebarFrame(snapshot(), DEFAULT_CONFIG, theme, 44, 64, false, 0);
+		const rows = contentRows(frame.lines);
+		const workspaceY = rows.indexOf("Workspace") + 1;
+
+		expect(frame.hitRegions).toContainEqual({
+			action: { type: "toggle-panel-body", panelId: "workspace" },
+			x1: 2,
+			x2: 44,
+			y1: workspaceY,
+			y2: workspaceY,
+			enabled: true,
+		});
+
+		const collapsed = renderSidebarFrame(snapshot(), DEFAULT_CONFIG, theme, 44, 64, false, 0, false, {
+			collapsedPanelIds: new Set(["workspace"]),
+		});
+		const collapsedRows = contentRows(collapsed.lines);
+		expect(collapsedRows).toContain("Workspace");
+		expect(collapsedRows).not.toContain("pi-atelier · feature/sidebar ▲");
+		expect(collapsed.hitRegions).toContainEqual({
+			action: { type: "toggle-panel-body", panelId: "workspace" },
+			x1: 2,
+			x2: 44,
+			y1: collapsedRows.indexOf("Workspace") + 1,
+			y2: collapsedRows.indexOf("Workspace") + 1,
+			enabled: true,
+		});
+	});
+
 	it("drops activated tool-name rows before the tool count", () => {
 		const toolsSnapshot = buildSidebarSnapshot({
 			state: { ...state, extensionStatuses: [] },
@@ -2074,7 +2146,7 @@ describe("sidebar component and overlay", () => {
 		expect(component.render(44).join("\n")).not.toContain("esc/q close");
 	});
 
-	it("shows a visible Resize state and active divider styling", () => {
+	it("shows a visible Sidebar interaction state and active divider styling", () => {
 		const fg = vi.fn((_color: string, text: string) => text);
 		const component = createSidebarComponent({
 			getSnapshot: snapshot,
@@ -2084,7 +2156,7 @@ describe("sidebar component and overlay", () => {
 			theme: { fg, bold: theme.bold, italic: theme.italic },
 		});
 
-		expect(component.render(44).join("\n")).toContain("Resize");
+		expect(component.render(44).join("\n")).toContain("Sidebar · click controls");
 		expect(fg).toHaveBeenCalledWith("warning", "│");
 	});
 
@@ -2341,6 +2413,47 @@ describe("sidebar component and overlay", () => {
 		expect(controller.isResizing()).toBe(true);
 		expect(controller.getWidth()).toBe(DEFAULT_SIDEBAR_WIDTH);
 		expect(input).toBeTypeOf("function");
+	});
+
+	it("toggles widget bodies from panel crown mouse clicks without persisting layout", () => {
+		let input: ((data: string) => unknown) | undefined;
+		const tui = fakeTui();
+		const custom = vi.fn((factory, customOptions) => {
+			const component = factory(tui as never, theme as never, {} as never, vi.fn());
+			customOptions.onHandle?.({ hide: vi.fn() });
+			return Object.assign(new Promise(() => undefined), { component });
+		});
+		const controller = createSidebarController({
+			ctx: {
+				mode: "tui",
+				ui: {
+					custom,
+					onTerminalInput: vi.fn((handler) => {
+						input = handler;
+						return vi.fn();
+					}),
+				},
+			} as never,
+			getSnapshot: snapshot,
+			getConfig: () => DEFAULT_CONFIG,
+		});
+
+		controller.show();
+		const component = (custom.mock.results[0]?.value as { component: { render(width: number): string[] } })
+			.component;
+		const rows = contentRows(component.render(44));
+		const workspaceY = rows.indexOf("Workspace") + 1;
+		expect(rows).toContain("pi-atelier · feature/sidebar ▲");
+		expect(controller.beginResize()).toBe(true);
+
+		const sidebarStartX = 120 - DEFAULT_SIDEBAR_WIDTH + 1;
+		input?.(`\u001b[<0;${sidebarStartX + 8};${workspaceY}M`);
+		input?.(`\u001b[<0;${sidebarStartX + 8};${workspaceY}m`);
+
+		const collapsedRows = contentRows(component.render(44));
+		expect(collapsedRows).toContain("Workspace");
+		expect(collapsedRows).not.toContain("pi-atelier · feature/sidebar ▲");
+		expect(DEFAULT_CONFIG.sidebarPanelLayout.find((entry) => entry.id === "workspace")?.visible).toBe(true);
 	});
 
 	it("cleans composed Resize state and restores full-width rendering on hide", () => {
