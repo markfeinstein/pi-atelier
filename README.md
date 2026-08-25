@@ -41,9 +41,9 @@ Pi Atelier defaults to its fixed dark Midnight Spectrum. Selecting a light, dark
 - Searchable tool controls
 - Editorial, minimal, and classic display presets
 - Session details, renaming, and safe compaction controls
-- Default-on, session-scoped, non-capturing docked information rail with live run, turn, tool, response-performance, Workspace Pulse, and TODOS activity
+- Default-on, session-scoped, non-capturing docked information rail with live run, turn, tool, response-performance, Workspace Pulse, and Todos activity
 - Ordered, global-user Sidebar panel layout with draft editing, unavailable-panel retention, and a structured extension contribution contract
-- TODO tracking for compatible `todo` results, including legacy details and the optional `@juicesharp/rpiv-todo` task format
+- Todo tracking for compatible `todo` results, including legacy details and the optional `@juicesharp/rpiv-todo` task format
 - Completion notifications when a turn settles or Pi explicitly requests user input
 - Fixed dark Midnight Spectrum by default, with Pi-theme inheritance, custom role colors, and a `NO_COLOR` fallback
 - User and trusted-project configuration
@@ -142,15 +142,15 @@ The sidebar starts shown by default whenever the extension initializes. Use **Se
 
 You can also press `alt+a` to access separate sidebar visibility and tool-detail controls from the menu. When enabled, the session-scoped rail attaches to the top-right, fills the terminal height, and stays visible without taking editor focus.
 
-The Sidebar is an ordered, global-user surface separate from the footer `segmentLayout`. **Settings → Display** includes a Sidebar editor with a local draft, visibility toggles, Shift+Up/Shift+Down reordering, a Sidebar preview, one-step Undo, `D` product-default restore, explicit Save, and Escape-to-discard. Save rejects a draft with no visible panels. Built-in panel IDs are `agent`, `activity`, `alerts`, `todos`, `context`, `workspace`, `usage`, and `tools`.
+The Sidebar is an ordered, global-user surface separate from the footer `segmentLayout`. **Settings → Display** includes a Sidebar editor with a local draft, visibility toggles, Shift+Up/Shift+Down reordering, a Sidebar preview, one-step Undo, `D` product-default restore, explicit Save, and Escape-to-discard. Save rejects a draft with no visible panels. Built-in panel IDs are `agent`, `activity`, `subagents`, `alerts`, `todos`, `workspace`, `usage`, and `tools`.
 
 Extensions may contribute structured panels through the public `pi.events` channel `pi-atelier:sidebar-panels` (or the exported `registerSidebarPanel` helper). A contribution uses a stable namespaced ID such as `my-extension:queue`, a title, text rows, and an optional semantic role. The event envelope is versioned and uses `type: "register"` (or `"unregister"`) with a contributor `source` and monotonic `revision`; Atelier emits `type: "discover"` during startup so contributors loaded first can replay their current panels. Atelier owns framing, palette, sanitization, truncation, responsive composition, and height omission; contributors cannot inject TUI components or ANSI. Registration, updates, discovery, and removal are lifecycle-safe, and discovery works regardless of extension load order. New contributed panels start hidden. A configured panel that is not currently registered remains in its saved position and appears as unavailable in Settings; it is not rendered until available again. If every configured-visible panel is unavailable, the sidebar says `No available panels` and points to Settings.
 
-For compatibility, `showSidebarAgent` and `showSidebarTodos` are read when no user `sidebarPanelLayout` exists. A user `sidebarPanelLayout` takes precedence over those legacy fields and over trusted-project/session values. Sidebar layout is never read from project or session configuration, and saving it patches only the user file while preserving unrelated keys. The footer's ordered `segmentLayout` remains independent. Subagents and Skills panels are intentionally not implemented.
+For compatibility, `showSidebarAgent` and `showSidebarTodos` are read when no user `sidebarPanelLayout` exists. A user `sidebarPanelLayout` takes precedence over those legacy fields and over trusted-project/session values. Sidebar layout is never read from project or session configuration, and saving it patches only the user file while preserving unrelated keys. The footer's ordered `segmentLayout` remains independent.
 
-The scan-first hierarchy leads with agent state and model when enabled, followed by a compact segmented context meter and a merged workspace summary. Workspace Pulse summarizes the entire Git worktree containing Pi's current directory: tracked changes, text additions and removals, and count-only untracked files. Binary files, changed submodules, and unresolved conflicts appear only when present; the first inspection, clean, unavailable, stale, and non-repository states remain explicit rather than being inferred from missing data. Pulse refreshes after tool activity, Turn boundaries, and branch changes without polling or watching external editor activity. It does not run tests, read untracked contents, change completion notifications, or add detail to the footer's existing dirty marker.
+The scan-first hierarchy leads with agent state and model when enabled, followed by live Activity and Subagents panels, a Usage panel that combines the compact segmented context meter with cumulative token and cost usage, then a merged workspace summary. The Subagents panel listens to the optional `pi-subagents` lifecycle events when that package is loaded and shows active subagents with state/runtime plus recently completed subagents for 10 minutes. Workspace Pulse summarizes the entire Git worktree containing Pi's current directory: tracked changes, text additions and removals, and count-only untracked files. Binary files, changed submodules, and unresolved conflicts appear only when present; the first inspection, clean, unavailable, stale, and non-repository states remain explicit rather than being inferred from missing data. Pulse refreshes after tool activity, Turn boundaries, and branch changes without polling or watching external editor activity. It does not run tests, read untracked contents, change completion notifications, or add detail to the footer's existing dirty marker.
 
-Below 40 sidebar columns, a unified compact mode stacks Agent metadata when enabled alongside Workspace metadata, uses inline Usage pairs, and collapses tool details so important values remain complete instead of truncating. At wider sizes, paired metrics and tool columns use intrinsic content measurements rather than stretching gaps across the available width. Usage appears only when token or cost data exists. Access type remains visible with the agent metadata. Active tool names are collapsed by default behind the tool count and can be expanded through the command or menu; that preference is saved to user configuration. Expanded names automatically collapse below 40 sidebar columns and reappear when widened. Routine healthy extension statuses stay hidden, while warnings and errors appear as explicit alerts.
+Below 40 sidebar columns, a unified compact mode stacks Agent metadata when enabled alongside Workspace metadata, uses inline Usage pairs, and collapses tool details so important values remain complete instead of truncating. At wider sizes, paired metrics and tool columns use intrinsic content measurements rather than stretching gaps across the available width. Usage always carries context availability; token and cost rows appear only when that data exists. Access type remains visible with the agent metadata. Active tool names are collapsed by default behind the tool count and can be expanded through the command or menu; that preference is saved to user configuration. Expanded names automatically collapse below 40 sidebar columns and reappear when widened. Routine healthy extension statuses stay hidden, while warnings and errors appear as explicit alerts.
 
 ## Completion notifications
 
@@ -170,9 +170,9 @@ Press `Ctrl+Shift+R` to enter temporary Resize mode. Drag from the sidebar divid
 
 Pi 0.84 cannot switch between regular and fullscreen renderers while any overlay is open. Hide the sidebar with `/atelier sidebar off`, switch TUI mode, then show it again with `/atelier sidebar on`. Atelier restores the non-overlapping split after the renderer switch.
 
-The TODOS panel accepts both legacy Pi `todo` details (`todos` items with `done` booleans) and `@juicesharp/rpiv-todo` task details (`tasks` items with `pending`, `in_progress`, or `completed` states). The `@juicesharp/rpiv-todo` extension is optional and must be installed separately; Pi Atelier neither installs nor requires it. The panel shows `done/total` progress, status indicators (`✓` completed, `◐` in progress, `○` pending), and task IDs.
+The Todos panel accepts both legacy Pi `todo` details (`todos` items with `done` booleans) and `@juicesharp/rpiv-todo` task details (`tasks` items with `pending`, `in_progress`, or `completed` states). The `@juicesharp/rpiv-todo` extension is optional and must be installed separately; Pi Atelier neither installs nor requires it. The panel shows `done/total` progress, status indicators (`✓` completed, `◐` in progress, `○` pending), and task IDs.
 
-TODO state follows session-tree branch changes. Valid updates received while the sidebar is hidden remain current, valid empty lists clear the panel, and unknown task states are ignored rather than rendered as pending. With the sidebar visible and `showSidebarTodos` enabled, successful results containing at least one recognized task collapse in the workspace to a `done/total` summary; errors and malformed results remain fully visible.
+Todo state follows session-tree branch changes. Valid updates received while the sidebar is hidden remain current, valid empty lists clear the panel, and unknown task states are ignored rather than rendered as pending. With the sidebar visible and `showSidebarTodos` enabled, successful results containing at least one recognized task collapse in the workspace to a `done/total` summary; errors and malformed results remain fully visible.
 
 ## Configuration
 
@@ -218,11 +218,11 @@ Complete example:
   "sidebarPanelLayout": [
     { "id": "agent", "visible": true },
     { "id": "activity", "visible": true },
+    { "id": "subagents", "visible": true },
     { "id": "alerts", "visible": true },
     { "id": "todos", "visible": true },
-    { "id": "context", "visible": true },
-    { "id": "workspace", "visible": true },
     { "id": "usage", "visible": true },
+    { "id": "workspace", "visible": true },
     { "id": "tools", "visible": true }
   ],
   "showSidebarTodos": true,
@@ -237,7 +237,7 @@ Complete example:
 - `"inherit"` maps Atelier roles to Pi's active theme tokens.
 - A custom object may include `base: "atelier"` or `base: "inherit"` plus any Atelier role names: `accent`, `primary`, `muted`, `dim`, `ready`, `working`, `input`, `output`, `cache`, `cost`, `context`, `menu`, `warning`, and `error`.
 
-Custom role values accept documented Pi theme tokens such as `"accent"`, `"warning"`, or `"thinkingHigh"`, 6-digit hex RGB colors such as `"#cba6f7"`, xterm 0-255 color indices, or `""` for the terminal default foreground. In inherited mode, neutral text uses `text`/`muted`/`dim`, and Atelier keeps its highlight families while sourcing them from Pi: ready/input/context use a calm thinking color, output uses Pi's high-emphasis thinking color, cache uses a type/syntax color, cost uses heading emphasis, working/warning use Pi warning, and workspace/TODOS/menu use accent.
+Custom role values accept documented Pi theme tokens such as `"accent"`, `"warning"`, or `"thinkingHigh"`, 6-digit hex RGB colors such as `"#cba6f7"`, xterm 0-255 color indices, or `""` for the terminal default foreground. In inherited mode, neutral text uses `text`/`muted`/`dim`, and Atelier keeps its highlight families while sourcing them from Pi: ready/input/context use a calm thinking color, output uses Pi's high-emphasis thinking color, cache uses a type/syntax color, cost uses heading emphasis, working/warning use Pi warning, and workspace/Todos/menu use accent.
 
 `colorScheme` layers like the display settings above. A custom object merges role by role over the layer below it and keeps that layer's base unless it names its own, so a project that sets `{ "output": "#ff00ff" }` over a user `"inherit"` keeps inheriting every other role. Setting `"atelier"` or `"inherit"` replaces the scheme outright, which is the way to discard role overrides from a lower layer.
 
@@ -288,9 +288,9 @@ Entries are trimmed, and blank or non-string entries are dropped with a warning.
 
 `showSidebarOnStartup` (default `true`) controls whether a new session opens the Sidebar automatically. It is a global user-only preference; trusted project and session values are ignored. Change it from **Settings → Sidebar on startup**. The `/atelier sidebar on|off` commands remain available for the current runtime regardless of this preference.
 
-`showSidebarAgent` controls whether the Agent panel renders inside the sidebar. It is a global user-only compatibility input; trusted project and session values are ignored. When set to `false`, the sidebar still shows but omits the agent state and model metadata section while leaving Activity, TODOS, Context, Workspace, Usage, and Tools unaffected. Use **Settings → Display** to edit the ordered Sidebar layout.
+`showSidebarAgent` controls whether the Agent panel renders inside the sidebar. It is a global user-only compatibility input; trusted project and session values are ignored. When set to `false`, the sidebar still shows but omits the agent state and model metadata section while leaving Activity, Todos, Workspace, Usage, and Tools unaffected. Use **Settings → Display** to edit the ordered Sidebar layout.
 
-`showSidebarTodos` (default `true`) is the corresponding global user-only compatibility input for the TODOS panel. Trusted project and session values are ignored. Set it to `false` to disable the panel and show complete todo output in the workspace. See [Sidebar](#sidebar) for supported result formats and TODO output behavior.
+`showSidebarTodos` (default `true`) is the corresponding global user-only compatibility input for the Todos panel. Trusted project and session values are ignored. Set it to `false` to disable the panel and show complete todo output in the workspace. See [Sidebar](#sidebar) for supported result formats and Todo output behavior.
 
 ## Presets
 

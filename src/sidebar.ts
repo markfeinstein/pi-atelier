@@ -12,6 +12,7 @@ import {
 	type RunActivitySnapshot,
 	type ToolActivity,
 } from "./run-activity.js";
+import type { SubagentActivityItem, SubagentActivitySnapshot } from "./subagent-activity.js";
 import {
 	BUILTIN_SIDEBAR_PANEL_IDS,
 	isSidebarPanelContributionId,
@@ -74,6 +75,7 @@ export interface SidebarSnapshotInput {
 	activeToolNames?: readonly string[];
 	extensionStatuses: readonly string[];
 	runActivity?: RunActivitySnapshot;
+	subagents?: SubagentActivitySnapshot;
 	todos?: readonly NormalizedTodo[];
 	sidebarPanels?: readonly SidebarPanelData[];
 }
@@ -89,6 +91,7 @@ export interface SidebarSnapshot extends AtelierState {
 	availableToolCount: number;
 	activeToolNames: readonly string[];
 	runActivity: RunActivitySnapshot;
+	subagents: SubagentActivitySnapshot;
 	todos: readonly NormalizedTodo[];
 	sidebarPanels?: readonly SidebarPanelData[];
 }
@@ -115,6 +118,7 @@ export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapsh
 		),
 		extensionStatuses: input.extensionStatuses,
 		runActivity: input.runActivity ?? EMPTY_RUN_ACTIVITY,
+		subagents: input.subagents ?? EMPTY_SUBAGENT_ACTIVITY,
 		todos: input.todos ?? [],
 		sidebarPanels: input.sidebarPanels ?? [],
 	};
@@ -167,6 +171,13 @@ function renderDock(
 	});
 }
 
+function properCase(value: string): string {
+	return value.toLowerCase().replace(/[\p{L}\p{N}]+/gu, (word) => {
+		if (word === "openai") return "OpenAI";
+		return `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`;
+	});
+}
+
 function panelRows(
 	title: string,
 	rows: readonly string[],
@@ -178,7 +189,7 @@ function panelRows(
 ): string[] {
 	const safeWidth = Math.max(4, Math.trunc(width));
 	const innerWidth = Math.max(0, safeWidth - 4);
-	const safeTitle = sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS).toUpperCase();
+	const safeTitle = properCase(sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS));
 	const crownPrefix = `╭─ ${jewel} `;
 	const crownFill = "─".repeat(
 		Math.max(0, safeWidth - visibleWidth(crownPrefix) - visibleWidth(safeTitle) - 2),
@@ -247,15 +258,15 @@ function agentRows(
 		),
 	);
 	const model = valueRow(snapshot.modelId, palette, "primary");
-	const provider = snapshot.provider ? palette.paint("muted", display(snapshot.provider).toUpperCase()) : "";
+	const provider = snapshot.provider ? palette.paint("muted", properCase(display(snapshot.provider))) : "";
 	const thinking = snapshot.thinkingLevel
-		? palette.paint("primary", display(snapshot.thinkingLevel).toUpperCase())
+		? palette.paint("primary", properCase(display(snapshot.thinkingLevel)))
 		: "";
 	const access =
 		snapshot.modelId || snapshot.provider
 			? palette.paint(
 					snapshot.metrics.subscription ? "ready" : "muted",
-					snapshot.metrics.subscription ? "SUBSCRIPTION" : "METERED",
+					snapshot.metrics.subscription ? "Subscription" : "Metered",
 				)
 			: "";
 	const separator = ` ${palette.paint("dim", "·")} `;
@@ -412,17 +423,24 @@ function contextRows(
 		metrics.contextPercent !== null &&
 		Number.isFinite(metrics.contextPercent);
 	if (!available) {
-		return [palette.paint("dim", "Context unavailable")];
+		return [metricValue("Context", "unavailable", palette, "dim")];
 	}
 
 	const role = contextRole(snapshot, config);
-	const usage = `${formatTokens(metrics.contextTokens ?? 0)} / ${
-		metrics.contextWindow > 0 ? formatTokens(metrics.contextWindow) : "—"
-	}`;
-	const percent = `${metrics.contextPercent?.toFixed(1)}%`;
-	const meterWidth = layout.compact
-		? Math.max(1, Math.min(10, contentWidth - 2))
-		: Math.max(1, Math.min(10, contentWidth - visibleWidth(usage) - visibleWidth(percent) - 4));
+	const usage = metricValue(
+		"Context",
+		`${formatTokens(metrics.contextTokens ?? 0)} / ${
+			metrics.contextWindow > 0 ? formatTokens(metrics.contextWindow) : "—"
+		}`,
+		palette,
+		role,
+	);
+	const percent = palette.paint(role, `${metrics.contextPercent?.toFixed(1)}%`);
+	const inlineMeterWidth = Math.min(10, contentWidth - visibleWidth(usage) - visibleWidth(percent) - 4);
+	const meterWidth =
+		inlineMeterWidth >= 1
+			? inlineMeterWidth
+			: Math.max(1, Math.min(10, contentWidth - visibleWidth(percent) - 3));
 	const filled = Math.min(
 		meterWidth,
 		Math.max(0, Math.round(((metrics.contextPercent ?? 0) / 100) * meterWidth)),
@@ -431,10 +449,10 @@ function contextRows(
 		"dim",
 		"·".repeat(Math.max(0, meterWidth - filled)),
 	)}${palette.paint("dim", "]")}`;
-	if (layout.compact) {
-		return [spacedRow(palette.paint(role, usage), palette.paint(role, percent), contentWidth), meter];
+	if (inlineMeterWidth >= 1) {
+		return [spacedRow(`${usage} ${meter}`, percent, contentWidth)];
 	}
-	return [spacedRow(palette.paint(role, usage), palette.paint(role, percent), contentWidth), meter];
+	return [truncateToWidth(usage, contentWidth, ""), spacedRow(meter, percent, contentWidth)];
 }
 
 const currencyDecimals = (value: number): number =>
@@ -464,7 +482,7 @@ function metricPairRows(
 	return visibleWidth(inline) <= contentWidth ? [inline] : [left, right];
 }
 
-function usageRows(
+function usageMetricRows(
 	snapshot: SidebarSnapshot,
 	config: AtelierConfig,
 	contentWidth: number,
@@ -557,13 +575,17 @@ function activeToolNameRows(
 	return rows;
 }
 
+function todoProgress(snapshot: SidebarSnapshot): string {
+	const todoList = snapshot.todos;
+	const done = todoList.filter((t) => t.status === "completed").length;
+	return `${done}/${todoList.length}`;
+}
+
 function todosRows(snapshot: SidebarSnapshot, palette: AtelierPalette): string[] {
 	const todoList = snapshot.todos;
 	if (todoList.length === 0) return [];
 
-	const done = todoList.filter((t) => t.status === "completed").length;
-	const total = todoList.length;
-	const rows = [palette.paint("muted", `${done}/${total}`)];
+	const rows: string[] = [];
 
 	for (const todo of todoList) {
 		let check: string;
@@ -616,6 +638,7 @@ interface ActivityGroups {
 interface SidebarGroup {
 	name: string;
 	panel?: string;
+	panelTitle?: string;
 	panelId?: string;
 	panelRole?: PaletteRole;
 	panelJewel?: "✦" | "✧";
@@ -649,7 +672,7 @@ function renderGroups(
 		if (rows.length > 0) {
 			rendered.push(
 				...panelRows(
-					group.panel,
+					group.panelTitle ?? group.panel,
 					rows,
 					width,
 					palette,
@@ -668,9 +691,9 @@ function panelIdForTitle(title: string): string | undefined {
 	return {
 		AGENT: "agent",
 		ACTIVITY: "activity",
+		SUBAGENTS: "subagents",
 		ALERTS: "alerts",
 		TODOS: "todos",
-		CONTEXT: "context",
 		WORKSPACE: "workspace",
 		USAGE: "usage",
 		TOOLS: "tools",
@@ -776,6 +799,109 @@ function aggregateActivityText(activity: RunActivitySnapshot): string {
 	return `tools ${completed} done · ${failed} failed`;
 }
 
+const EMPTY_SUBAGENT_ACTIVITY: SubagentActivitySnapshot = Object.freeze({
+	active: Object.freeze([]),
+	recent: Object.freeze([]),
+});
+
+function subagentStatusRole(status: SubagentActivityItem["status"]): PaletteRole {
+	if (status === "failed" || status === "rejected" || status === "stopped") return "error";
+	if (status === "paused") return "warning";
+	if (status === "running" || status === "queued" || status === "pending") return "working";
+	return "ready";
+}
+
+function subagentStatusSymbol(status: SubagentActivityItem["status"]): string {
+	if (status === "failed" || status === "rejected" || status === "stopped") return "✕";
+	if (status === "paused") return "Ⅱ";
+	if (status === "queued" || status === "pending") return "◦";
+	if (status === "running") return "◆";
+	return "✓";
+}
+
+function subagentStatusLabel(status: SubagentActivityItem["status"]): string {
+	if (status === "complete") return "done";
+	return status;
+}
+
+function subagentName(item: SubagentActivityItem): string {
+	return (
+		sanitize(item.agent ?? (item.agents.length > 0 ? item.agents.join("+") : (item.label ?? item.id))) ||
+		"subagent"
+	);
+}
+
+function subagentRuntime(item: SubagentActivityItem, now: number): string {
+	if (item.durationMs !== undefined) return formatDuration(item.durationMs);
+	const end = item.endedAt ?? now;
+	return formatDuration(Math.max(0, end - item.startedAt));
+}
+
+function subagentRow(
+	item: SubagentActivityItem,
+	contentWidth: number,
+	palette: AtelierPalette,
+	now: number,
+): string {
+	const role = subagentStatusRole(item.status);
+	const name = palette.paint(item.status === "complete" ? "muted" : "primary", subagentName(item));
+	const left = `${palette.paint(role, subagentStatusSymbol(item.status))} ${name}`;
+	const right = palette.paint(role, `${subagentStatusLabel(item.status)} ${subagentRuntime(item, now)}`);
+	return spacedRow(left, right, contentWidth);
+}
+
+function subagentDetailRow(
+	item: SubagentActivityItem,
+	contentWidth: number,
+	palette: AtelierPalette,
+	now: number,
+): string | undefined {
+	const currentTool = sanitize(item.currentTool ?? "");
+	const label = sanitize(item.label ?? "");
+	const stats = [
+		item.turnCount !== undefined ? `⟳ ${finiteCount(item.turnCount)}` : "",
+		item.toolCount !== undefined ? `tools ${finiteCount(item.toolCount)}` : "",
+	].filter(Boolean);
+	const toolRuntime =
+		item.currentToolStartedAt !== undefined
+			? ` ${formatDuration(Math.max(0, now - item.currentToolStartedAt))}`
+			: "";
+	const detail = currentTool ? `${currentTool}${toolRuntime}` : stats.length > 0 ? stats.join(" · ") : label;
+	if (!detail) return undefined;
+	return truncateToWidth(palette.paint("dim", `⎿ ${detail}`), contentWidth, "");
+}
+
+function subagentSidebarGroups(
+	snapshot: SidebarSnapshot,
+	contentWidth: number,
+	palette: AtelierPalette,
+	now: number,
+): SidebarGroup[] {
+	const rows: SidebarGroup[] = [];
+	for (const [index, item] of snapshot.subagents.active.entries()) {
+		const detail = subagentDetailRow(item, contentWidth, palette, now);
+		rows.push({
+			name: `subagentActive:${item.id}`,
+			panel: "SUBAGENTS",
+			panelRole: subagentStatusRole(item.status),
+			rows: [subagentRow(item, contentWidth, palette, now), ...(detail ? [detail] : [])],
+			required: false,
+			dropRank: 65 + (snapshot.subagents.active.length - index) / 100,
+		});
+	}
+	for (const [index, item] of snapshot.subagents.recent.slice(0, 4).entries()) {
+		rows.push({
+			name: `subagentRecent:${item.id}`,
+			panel: "SUBAGENTS",
+			panelRole: subagentStatusRole(item.status),
+			rows: [subagentRow(item, contentWidth, palette, now)],
+			required: false,
+			dropRank: 18 + (4 - index) / 100,
+		});
+	}
+	return rows;
+}
+
 function activitySidebarGroups(
 	snapshot: SidebarSnapshot,
 	contentWidth: number,
@@ -875,7 +1001,7 @@ export function renderSidebarLines(
 			? [
 					{
 						name: "resize",
-						rows: [palette.paint("warning", "RESIZE · drag divider"), ""],
+						rows: [palette.paint("warning", "Resize · drag divider"), ""],
 						required: true,
 						dropRank: Number.POSITIVE_INFINITY,
 					},
@@ -902,6 +1028,7 @@ export function renderSidebarLines(
 			required: group.name === "activityCore",
 			dropRank: group.name === "activityCore" ? Number.POSITIVE_INFINITY : group.dropRank + 40,
 		})),
+		...subagentSidebarGroups(snapshot, panelContentWidth, palette, now),
 		{
 			name: "statusDetails",
 			panel: "ALERTS",
@@ -913,18 +1040,11 @@ export function renderSidebarLines(
 		{
 			name: "todos",
 			panel: "TODOS",
+			panelTitle: `TODOS · ${todoProgress(snapshot)}`,
 			panelRole: "accent",
 			rows: config.showSidebarTodos ? todosRows(snapshot, palette) : [],
 			required: false,
 			dropRank: 90,
-		},
-		{
-			name: "context",
-			panel: "CONTEXT",
-			panelRole: contextRole(snapshot, config),
-			rows: contextRows(snapshot, config, panelContentWidth, layout, palette),
-			required: true,
-			dropRank: Number.POSITIVE_INFINITY,
 		},
 		{
 			name: "workspaceCore",
@@ -967,10 +1087,18 @@ export function renderSidebarLines(
 			dropRank: 4,
 		},
 		{
-			name: "usage",
+			name: "usageContext",
 			panel: "USAGE",
 			panelRole: "output",
-			rows: usageRows(snapshot, config, panelContentWidth, layout, palette),
+			rows: contextRows(snapshot, config, panelContentWidth, layout, palette),
+			required: true,
+			dropRank: Number.POSITIVE_INFINITY,
+		},
+		{
+			name: "usageMetrics",
+			panel: "USAGE",
+			panelRole: "output",
+			rows: usageMetricRows(snapshot, config, panelContentWidth, layout, palette),
 			required: false,
 			dropRank: 20,
 		},
@@ -1022,7 +1150,7 @@ export function renderSidebarLines(
 			const rows = contributedRows(panel, palette);
 			ordered.push({
 				name: `contributed:${panel.id}`,
-				panel: sanitize(panel.title).toUpperCase() || panel.id,
+				panel: properCase(sanitize(panel.title)) || panel.id,
 				panelId: panel.id,
 				panelRole: panel.role ?? "accent",
 				rows: rows.length > 0 ? rows : [palette.paint("dim", "No data")],

@@ -44,11 +44,11 @@ describe("configuration", () => {
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => entry.id)).toEqual([
 			"agent",
 			"activity",
+			"subagents",
 			"alerts",
 			"todos",
-			"context",
-			"workspace",
 			"usage",
+			"workspace",
 			"tools",
 		]);
 	});
@@ -77,6 +77,18 @@ describe("configuration", () => {
 		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
 		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(true);
 		expect(result.warnings.filter((warning) => warning.includes("duplicate")).length).toBe(1);
+	});
+
+	it("migrates retired Sidebar Context visibility to Usage", () => {
+		const result = validateConfig({
+			sidebarPanelLayout: [
+				{ id: "usage", visible: false },
+				{ id: "context", visible: true },
+			] as Array<{ id: string; visible: boolean }>,
+		});
+		expect(result.config.sidebarPanelLayout.map((entry) => entry.id)).not.toContain("context");
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "usage")?.visible).toBe(true);
+		expect(result.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("context")]));
 	});
 
 	it("keeps legacy Sidebar visibility compatible when no authoritative layout is present", () => {

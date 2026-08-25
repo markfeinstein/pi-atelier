@@ -41,13 +41,15 @@ export const SIDEBAR_PANEL_MAX_TRACKED_SOURCES = SIDEBAR_PANEL_MAX_PANELS;
 export const BUILTIN_SIDEBAR_PANEL_IDS = [
 	"agent",
 	"activity",
+	"subagents",
 	"alerts",
 	"todos",
-	"context",
-	"workspace",
 	"usage",
+	"workspace",
 	"tools",
 ] as const;
+
+const RETIRED_BUILTIN_SIDEBAR_PANEL_IDS = ["context"] as const;
 
 export const DEFAULT_SIDEBAR_PANEL_LAYOUT: SidebarPanelLayout = BUILTIN_SIDEBAR_PANEL_IDS.map((id) => ({
 	id,
@@ -55,6 +57,7 @@ export const DEFAULT_SIDEBAR_PANEL_LAYOUT: SidebarPanelLayout = BUILTIN_SIDEBAR_
 }));
 
 const BUILTIN_IDS = new Set<string>(BUILTIN_SIDEBAR_PANEL_IDS);
+const RETIRED_BUILTIN_IDS = new Set<string>(RETIRED_BUILTIN_SIDEBAR_PANEL_IDS);
 // Use a strict end-of-input assertion; JavaScript's `$` also matches before a final line terminator.
 const NAMESPACED_ID = /^[a-z][a-z0-9_-]*:[a-z][a-z0-9_-]*(?![\s\S])/;
 const PANEL_ROLES = new Set([
@@ -234,7 +237,13 @@ export function normalizeSidebarPanelLayout(
 ): SidebarPanelLayout {
 	const normalized: SidebarPanelLayout = [];
 	const seen = new Set<string>();
+	let retiredContextVisible = false;
 	for (const entry of entries) {
+		const entryId = String(entry?.id);
+		if (entry && RETIRED_BUILTIN_IDS.has(entryId)) {
+			retiredContextVisible ||= entryId === "context" && entry.visible === true;
+			continue;
+		}
 		if (!entry || !isSidebarPanelId(entry.id)) {
 			warnings.push(`Unknown sidebar panel: ${String(entry?.id)}`);
 			continue;
@@ -248,6 +257,10 @@ export function normalizeSidebarPanelLayout(
 	}
 	for (const id of BUILTIN_SIDEBAR_PANEL_IDS) {
 		if (!seen.has(id)) normalized.push({ id, visible: true });
+	}
+	if (retiredContextVisible) {
+		const usage = normalized.find((entry) => entry.id === "usage");
+		if (usage) usage.visible = true;
 	}
 	if (!normalized.some((entry) => entry.visible)) {
 		warnings.push("sidebarPanelLayout must include at least one visible panel; restoring agent");
