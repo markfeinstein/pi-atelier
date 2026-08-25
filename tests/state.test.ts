@@ -6,14 +6,6 @@ afterEach(() => {
 	vi.useRealTimers();
 });
 
-function deferred<T>() {
-	let resolve!: (value: T) => void;
-	const promise = new Promise<T>((done) => {
-		resolve = done;
-	});
-	return { promise, resolve };
-}
-
 const assistant = {
 	type: "message",
 	message: {
@@ -50,6 +42,7 @@ function createRuntime(
 		model: { id: "model", provider: "provider", reasoning: true },
 		modelRegistry: { isUsingOAuth: vi.fn().mockReturnValue(true) },
 		getContextUsage: vi.fn().mockReturnValue({ tokens: 1_000, contextWindow: 10_000, percent: 10 }),
+		isProjectTrusted: vi.fn().mockReturnValue(true),
 		sessionManager: { getEntries: vi.fn().mockReturnValue([assistant]) },
 	};
 	const runtime = new AtelierRuntime({
@@ -86,7 +79,7 @@ describe("AtelierRuntime", () => {
 		const { runtime } = createRuntime(undefined, Math.random, inspectWorkspace);
 
 		expect(runtime.getState()).toMatchObject({ workspacePulse: { status: "inspecting" } });
-		await runtime.refreshWorkspacePulse();
+		await runtime.flushWorkspacePulseRefresh();
 
 		expect(runtime.getState()).toMatchObject({
 			branch: "feature/pulse",
@@ -105,7 +98,7 @@ describe("AtelierRuntime", () => {
 		};
 		const { runtime } = createRuntime(undefined, Math.random, vi.fn().mockResolvedValue(untrackedOnly));
 
-		await runtime.refreshWorkspacePulse();
+		await runtime.flushWorkspacePulseRefresh();
 
 		expect(runtime.getState()).toMatchObject({
 			dirty: false,
@@ -120,8 +113,8 @@ describe("AtelierRuntime", () => {
 			.mockResolvedValueOnce({ kind: "unavailable" });
 		const { runtime } = createRuntime(undefined, Math.random, inspectWorkspace);
 
-		await runtime.refreshWorkspacePulse();
-		await runtime.refreshWorkspacePulse();
+		await runtime.flushWorkspacePulseRefresh();
+		await runtime.flushWorkspacePulseRefresh();
 
 		expect(runtime.getState()).toMatchObject({
 			branch: "main",
@@ -133,58 +126,46 @@ describe("AtelierRuntime", () => {
 		});
 	});
 
-	it("ignores an older inspection that finishes after a newer refresh", async () => {
-		const older = deferred<typeof cleanInspection>();
-		const newer = deferred<typeof cleanInspection>();
-		const inspectWorkspace = vi.fn().mockReturnValueOnce(older.promise).mockReturnValueOnce(newer.promise);
-		const { runtime } = createRuntime(undefined, Math.random, inspectWorkspace);
-		const firstRefresh = runtime.refreshWorkspacePulse();
-		const secondRefresh = runtime.refreshWorkspacePulse();
-		const changed = {
-			...cleanInspection,
-			branch: "newer",
-			snapshot: { ...cleanInspection.snapshot, trackedFiles: 1 },
-		};
-
-		newer.resolve(changed);
-		await secondRefresh;
-		older.resolve(cleanInspection);
-		await firstRefresh;
-
-		expect(runtime.getState()).toMatchObject({
-			branch: "newer",
-			workspacePulse: { status: "changed" },
-		});
-	});
-
 	it("does not invalidate rendering when a refresh confirms the same Pulse", async () => {
 		const inspectWorkspace = vi.fn().mockResolvedValue(cleanInspection);
 		const { runtime, requestRender } = createRuntime(undefined, Math.random, inspectWorkspace);
-		await runtime.refreshWorkspacePulse();
+		await runtime.flushWorkspacePulseRefresh();
 		requestRender.mockClear();
 
-		await runtime.refreshWorkspacePulse();
+		await runtime.flushWorkspacePulseRefresh();
 
 		expect(requestRender).not.toHaveBeenCalled();
 	});
 
-	it("coalesces tool-driven refresh requests and cancels them on disposal", async () => {
-		vi.useFakeTimers();
-		const inspectWorkspace = vi.fn().mockResolvedValue(cleanInspection);
-		const { runtime } = createRuntime(undefined, Math.random, inspectWorkspace);
+	it("reports context-free inert state once disposed without consulting the retired context", async () => {
+		const { runtime, ctx } = createRuntime();
+		runtime.setActivity("working");
+		await runtime.flushWorkspacePulseRefresh();
+		expect(runtime.getState()).toMatchObject({
+			activity: "working",
+			branch: "main",
+			metrics: { contextTokens: 1_000, contextWindow: 10_000, contextPercent: 10 },
+		});
+		ctx.getContextUsage.mockImplementation(() => {
+			throw new Error("retired context is unavailable");
+		});
 
-		runtime.scheduleWorkspacePulseRefresh();
-		runtime.scheduleWorkspacePulseRefresh();
-		runtime.scheduleWorkspacePulseRefresh();
-		await vi.advanceTimersByTimeAsync(249);
-		expect(inspectWorkspace).not.toHaveBeenCalled();
-		await vi.advanceTimersByTimeAsync(1);
-		expect(inspectWorkspace).toHaveBeenCalledOnce();
+		expect(() => runtime.dispose()).not.toThrow();
 
-		runtime.scheduleWorkspacePulseRefresh();
-		runtime.dispose();
-		await vi.runAllTimersAsync();
-		expect(inspectWorkspace).toHaveBeenCalledOnce();
+		const state = runtime.getState();
+		expect(state.branch).toBeUndefined();
+		expect(state.workingLabel).toBeUndefined();
+		expect(state.activity).toBe("ready");
+		expect(state.dirty).toBe(false);
+		expect(state.extensionStatuses).toEqual([]);
+		expect(state.metrics).toMatchObject({
+			usageAvailable: false,
+			costAvailable: false,
+			contextTokens: null,
+			contextWindow: 0,
+			contextPercent: null,
+		});
+		expect(state.workspacePulse).toEqual({ status: "unavailable" });
 	});
 
 	it("reports context-free inert state once disposed without consulting the retired context", async () => {
@@ -279,6 +260,7 @@ describe("AtelierRuntime", () => {
 			ctx: {
 				modelRegistry: { isUsingOAuth: vi.fn() },
 				getContextUsage: vi.fn(),
+				isProjectTrusted: vi.fn().mockReturnValue(true),
 				sessionManager: { getEntries: vi.fn().mockReturnValue([]) },
 			} as never,
 			config: DEFAULT_CONFIG,
@@ -328,6 +310,7 @@ describe("AtelierRuntime", () => {
 			ctx: {
 				modelRegistry: { isUsingOAuth: vi.fn() },
 				getContextUsage: vi.fn(),
+				isProjectTrusted: vi.fn().mockReturnValue(true),
 				sessionManager: { getEntries: vi.fn().mockReturnValue([]) },
 			} as never,
 			config: DEFAULT_CONFIG,

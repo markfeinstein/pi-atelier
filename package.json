@@ -1,6 +1,6 @@
 {
 	"name": "@markfeinstein/pi-atelier",
-	"version": "0.8.0",
+	"version": "0.8.2",
 	"description": "A responsive status rail and live activity sidebar for Pi",
 	"type": "module",
 	"license": "MIT",
