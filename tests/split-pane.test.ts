@@ -1,5 +1,6 @@
 import { TuiAltScreen, TuiMainScreen as PiTuiMainScreen } from "@earendil-works/pi-tui";
 import type { TUI } from "@earendil-works/pi-tui";
+import type { SidebarHitRegion } from "../src/sidebar-interaction.js";
 import { describe, expect, it, vi } from "vitest";
 import {
 	DEFAULT_SIDEBAR_WIDTH,
@@ -69,17 +70,38 @@ function resizeHarness(columns = 120) {
 	let input: ((data: string) => { consume?: boolean; data?: string } | undefined) | undefined;
 	const unsubscribe = vi.fn();
 	const onResizeChange = vi.fn();
+	const onSidebarAction = vi.fn();
 	const split = createSplitPaneController({
 		subscribeInput(handler) {
 			input = handler;
 			return unsubscribe;
 		},
 		onResizeChange,
+		onSidebarAction,
 	});
 	split.attach(h.tui);
 	split.show();
-	return { ...h, split, unsubscribe, onResizeChange, send: (data: string) => input?.(data) };
+	return { ...h, split, unsubscribe, onResizeChange, onSidebarAction, send: (data: string) => input?.(data) };
 }
+
+const toolsRegion = (overrides: Partial<SidebarHitRegion> = {}): SidebarHitRegion => ({
+	action: { type: "toggle-tool-names" },
+	x1: 2,
+	x2: DEFAULT_SIDEBAR_WIDTH,
+	y1: 4,
+	y2: 4,
+	enabled: true,
+	...overrides,
+});
+
+const panelRegion = (panelId: string, y: number): SidebarHitRegion => ({
+	action: { type: "toggle-panel-body", panelId },
+	x1: 2,
+	x2: DEFAULT_SIDEBAR_WIDTH,
+	y1: y,
+	y2: y,
+	enabled: true,
+});
 
 describe("SGR mouse parsing", () => {
 	it("parses press, held motion, and release coordinates", () => {
@@ -114,6 +136,59 @@ describe("temporary Resize mode", () => {
 		expect(h.send(release(70))).toEqual({ consume: true });
 		expect(h.split.isResizing()).toBe(false);
 		expect(h.split.getSidebarWidth()).toBe(51);
+	});
+	it("clicks sidebar hit regions during temporary interaction mode", () => {
+		const h = resizeHarness();
+		h.split.setSidebarHitRegions([toolsRegion()]);
+		h.split.beginResize();
+		const sidebarStartX = 120 - DEFAULT_SIDEBAR_WIDTH + 1;
+
+		expect(h.send(press(sidebarStartX + 8, 4))).toEqual({ consume: true });
+		expect(h.send(release(sidebarStartX + 8, 4))).toEqual({ consume: true });
+
+		expect(h.onSidebarAction).toHaveBeenCalledOnce();
+		expect(h.onSidebarAction).toHaveBeenCalledWith({ type: "toggle-tool-names" });
+		expect(h.split.isResizing()).toBe(true);
+		expect(h.write).not.toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
+	});
+	it("cancels pending clicks on motion outside the original hit region", () => {
+		const h = resizeHarness();
+		h.split.setSidebarHitRegions([toolsRegion()]);
+		h.split.beginResize();
+		const sidebarStartX = 120 - DEFAULT_SIDEBAR_WIDTH + 1;
+
+		h.send(press(sidebarStartX + 8, 4));
+		h.send(motion(sidebarStartX + 8, 6));
+		h.send(release(sidebarStartX + 8, 4));
+
+		expect(h.onSidebarAction).not.toHaveBeenCalled();
+		expect(h.split.isResizing()).toBe(true);
+	});
+	it("does not match panel click releases across different widget crowns", () => {
+		const h = resizeHarness();
+		h.split.setSidebarHitRegions([panelRegion("workspace", 6), panelRegion("usage", 10)]);
+		h.split.beginResize();
+		const sidebarStartX = 120 - DEFAULT_SIDEBAR_WIDTH + 1;
+
+		h.send(press(sidebarStartX + 8, 6));
+		h.send(release(sidebarStartX + 8, 10));
+
+		expect(h.onSidebarAction).not.toHaveBeenCalled();
+		expect(h.split.isResizing()).toBe(true);
+	});
+	it("prioritizes divider dragging over sidebar click regions", () => {
+		const h = resizeHarness();
+		h.split.setSidebarHitRegions([toolsRegion({ x1: 1, x2: DEFAULT_SIDEBAR_WIDTH, y1: 4, y2: 4 })]);
+		h.split.beginResize();
+		const dividerX = 120 - DEFAULT_SIDEBAR_WIDTH + 1;
+
+		h.send(press(dividerX, 4));
+		h.send(motion(70, 4));
+		h.send(release(70, 4));
+
+		expect(h.split.getSidebarWidth()).toBe(51);
+		expect(h.onSidebarAction).not.toHaveBeenCalled();
+		expect(h.split.isResizing()).toBe(false);
 	});
 	it("receives fullscreen drags before viewport text selection", () => {
 		const renderer = new TuiAltScreen({ columns: 120, rows: 36, write: vi.fn() } as never);

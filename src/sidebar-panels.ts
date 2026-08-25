@@ -41,6 +41,7 @@ export const SIDEBAR_PANEL_MAX_TRACKED_SOURCES = SIDEBAR_PANEL_MAX_PANELS;
 export const BUILTIN_SIDEBAR_PANEL_IDS = [
 	"agent",
 	"activity",
+	"subagents",
 	"alerts",
 	"todos",
 	"usage",
@@ -236,12 +237,11 @@ export function normalizeSidebarPanelLayout(
 ): SidebarPanelLayout {
 	const normalized: SidebarPanelLayout = [];
 	const seen = new Set<string>();
-	let retiredContextVisible: boolean | undefined;
+	let retiredContextVisible = false;
 	for (const entry of entries) {
 		const entryId = String(entry?.id);
 		if (entry && RETIRED_BUILTIN_IDS.has(entryId)) {
-			if (entryId === "context")
-				retiredContextVisible = retiredContextVisible === true || entry.visible === true;
+			retiredContextVisible ||= entryId === "context" && entry.visible === true;
 			continue;
 		}
 		if (!entry || !isSidebarPanelId(entry.id)) {
@@ -256,13 +256,9 @@ export function normalizeSidebarPanelLayout(
 		normalized.push({ id: entry.id, visible: entry.visible === true });
 	}
 	for (const id of BUILTIN_SIDEBAR_PANEL_IDS) {
-		if (!seen.has(id))
-			normalized.push({
-				id,
-				visible: id === "usage" && retiredContextVisible !== undefined ? retiredContextVisible : true,
-			});
+		if (!seen.has(id)) normalized.push({ id, visible: true });
 	}
-	if (retiredContextVisible === true) {
+	if (retiredContextVisible) {
 		const usage = normalized.find((entry) => entry.id === "usage");
 		if (usage) usage.visible = true;
 	}
