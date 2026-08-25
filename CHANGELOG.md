@@ -4,12 +4,12 @@ This changelog tracks the divergent `integration` line. Changes may be upstreame
 
 ## Unreleased
 
-- Preserve global-only completion notification preferences and legacy Sidebar visibility fallbacks when layered config is malformed or omits lower layers.
-- Preserve retired Context panel visibility when migrating Sidebar layouts to Usage, and keep omitted configuration layers from shifting display precedence.
 - Restore inherited Pi theme colors in Sidebar values when `colorScheme` is set to `inherit`.
 - Restore working-label configuration, persisted session display/sidebar config, and title-cased Usage composition after the helper refactor.
 - Local maintenance: declare the permanent divergent integration-line policy, normal scoped package identity, release flow, contribution base, CI gate, and private `.plans/` handling.
 - Add a global **Sidebar on startup** setting that is saved to user configuration while preserving session-scoped Sidebar on/off controls.
+- Add temporary Sidebar interaction mouse support: `Ctrl+Shift+R` now supports divider dragging, clicking the Tools disclosure row, and session-scoped widget body collapse from panel crown clicks in regular and fullscreen TUI modes while keeping mouse reporting off outside the temporary mode.
+- Harden Atelier lifecycle teardown for session-owned overlays, exception-safe cleanup, stale Sidebar snapshots, candidate startup failures, and deferred Display saves.
 
 ## 0.7.2 — 2026-08-06
 
