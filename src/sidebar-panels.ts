@@ -236,11 +236,12 @@ export function normalizeSidebarPanelLayout(
 ): SidebarPanelLayout {
 	const normalized: SidebarPanelLayout = [];
 	const seen = new Set<string>();
-	let retiredContextVisible = false;
+	let retiredContextVisible: boolean | undefined;
 	for (const entry of entries) {
 		const entryId = String(entry?.id);
 		if (entry && RETIRED_BUILTIN_IDS.has(entryId)) {
-			retiredContextVisible ||= entryId === "context" && entry.visible === true;
+			if (entryId === "context")
+				retiredContextVisible = retiredContextVisible === true || entry.visible === true;
 			continue;
 		}
 		if (!entry || !isSidebarPanelId(entry.id)) {
@@ -255,9 +256,13 @@ export function normalizeSidebarPanelLayout(
 		normalized.push({ id: entry.id, visible: entry.visible === true });
 	}
 	for (const id of BUILTIN_SIDEBAR_PANEL_IDS) {
-		if (!seen.has(id)) normalized.push({ id, visible: true });
+		if (!seen.has(id))
+			normalized.push({
+				id,
+				visible: id === "usage" && retiredContextVisible !== undefined ? retiredContextVisible : true,
+			});
 	}
-	if (retiredContextVisible) {
+	if (retiredContextVisible === true) {
 		const usage = normalized.find((entry) => entry.id === "usage");
 		if (usage) usage.visible = true;
 	}

@@ -138,6 +138,19 @@ const display = (value: string | undefined): string => {
 	return safe || "—";
 };
 
+function properCase(text: string): string {
+	return sanitize(text)
+		.toLocaleLowerCase("en")
+		.replace(
+			/(^|[\s/:._-])(\p{L})/gu,
+			(_match, prefix: string, letter: string) => `${prefix}${letter.toLocaleUpperCase("en")}`,
+		);
+}
+
+function providerCase(text: string): string {
+	return properCase(text).replace(/\bOpenai\b/g, "OpenAI");
+}
+
 const finiteCount = (value: number): number => (Number.isFinite(value) ? Math.max(0, Math.trunc(value)) : 0);
 
 function shortPath(path: string): string {
@@ -184,7 +197,7 @@ function panelRows(
 ): string[] {
 	const safeWidth = Math.max(4, Math.trunc(width));
 	const innerWidth = Math.max(0, safeWidth - 4);
-	const safeTitle = sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS).toUpperCase();
+	const safeTitle = properCase(sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS));
 	const crownPrefix = `╭─ ${jewel} `;
 	const crownFill = "─".repeat(
 		Math.max(0, safeWidth - visibleWidth(crownPrefix) - visibleWidth(safeTitle) - 2),
@@ -253,15 +266,15 @@ function agentRows(
 		),
 	);
 	const model = valueRow(snapshot.modelId, palette, "primary");
-	const provider = snapshot.provider ? palette.paint("muted", display(snapshot.provider).toUpperCase()) : "";
+	const provider = snapshot.provider ? palette.paint("muted", providerCase(display(snapshot.provider))) : "";
 	const thinking = snapshot.thinkingLevel
-		? palette.paint("primary", display(snapshot.thinkingLevel).toUpperCase())
+		? palette.paint("primary", properCase(display(snapshot.thinkingLevel)))
 		: "";
 	const access =
 		snapshot.modelId || snapshot.provider
 			? palette.paint(
 					snapshot.metrics.subscription ? "ready" : "muted",
-					snapshot.metrics.subscription ? "SUBSCRIPTION" : "METERED",
+					snapshot.metrics.subscription ? "Subscription" : "Metered",
 				)
 			: "";
 	const separator = ` ${palette.paint("dim", "·")} `;
@@ -426,9 +439,10 @@ function contextRows(
 		metrics.contextWindow > 0 ? formatTokens(metrics.contextWindow) : "—"
 	}`;
 	const percent = `${metrics.contextPercent?.toFixed(1)}%`;
+	const label = metricValue("Context", usage, palette, role);
 	const meterWidth = layout.compact
-		? Math.max(1, Math.min(10, contentWidth - 2))
-		: Math.max(1, Math.min(10, contentWidth - visibleWidth(usage) - visibleWidth(percent) - 4));
+		? Math.max(1, Math.min(10, contentWidth - visibleWidth(percent) - 1))
+		: Math.max(1, Math.min(10, contentWidth - visibleWidth(label) - visibleWidth(percent) - 4));
 	const filled = Math.min(
 		meterWidth,
 		Math.max(0, Math.round(((metrics.contextPercent ?? 0) / 100) * meterWidth)),
@@ -438,9 +452,10 @@ function contextRows(
 		"·".repeat(Math.max(0, meterWidth - filled)),
 	)}${palette.paint("dim", "]")}`;
 	if (layout.compact) {
-		return [spacedRow(palette.paint(role, usage), palette.paint(role, percent), contentWidth), meter];
+		return [label, spacedRow(meter, palette.paint(role, percent), contentWidth)];
 	}
-	return [spacedRow(palette.paint(role, usage), palette.paint(role, percent), contentWidth), meter];
+	const left = `${label} ${meter}`;
+	return [spacedRow(left, palette.paint(role, percent), contentWidth)];
 }
 
 const currencyDecimals = (value: number): number =>
@@ -563,13 +578,18 @@ function activeToolNameRows(
 	return rows;
 }
 
+function todosTitle(snapshot: SidebarSnapshot): string {
+	const todoList = snapshot.todos;
+	if (todoList.length === 0) return "TODOS";
+	const done = todoList.filter((t) => t.status === "completed").length;
+	return `TODOS · ${done}/${todoList.length}`;
+}
+
 function todosRows(snapshot: SidebarSnapshot, palette: AtelierPalette): string[] {
 	const todoList = snapshot.todos;
 	if (todoList.length === 0) return [];
 
-	const done = todoList.filter((t) => t.status === "completed").length;
-	const total = todoList.length;
-	const rows = [palette.paint("muted", `${done}/${total}`)];
+	const rows: string[] = [];
 
 	for (const todo of todoList) {
 		let check: string;
@@ -671,6 +691,7 @@ function renderGroups(
 }
 
 function panelIdForTitle(title: string): string | undefined {
+	const baseTitle = title.split("·", 1)[0]?.trim().toLocaleUpperCase("en") ?? "";
 	return {
 		AGENT: "agent",
 		ACTIVITY: "activity",
@@ -680,7 +701,7 @@ function panelIdForTitle(title: string): string | undefined {
 		WORKSPACE: "workspace",
 		USAGE: "usage",
 		TOOLS: "tools",
-	}[title];
+	}[baseTitle];
 }
 
 function contributedRows(panel: SidebarPanelData, palette: AtelierPalette): string[] {
@@ -867,7 +888,7 @@ export function renderSidebarLines(
 	now = Date.now(),
 	resizing = false,
 ): string[] {
-	const palette = createPalette(theme, colorEnabled);
+	const palette = createPalette(theme, colorEnabled, config.colorScheme);
 	const safeWidth = Math.max(0, Math.trunc(width));
 	const safeHeight = Math.max(0, Math.trunc(height));
 	if (safeWidth <= 0 || safeHeight <= 0) return [];
@@ -876,12 +897,16 @@ export function renderSidebarLines(
 	const layout = sidebarLayout(safeWidth, config);
 	const toolNameRows = layout.showToolNames ? activeToolNameRows(snapshot, panelContentWidth, palette) : [];
 	const workspace = workspaceRows(snapshot, layout, palette);
+	const usage = [
+		...contextRows(snapshot, config, panelContentWidth, layout, palette),
+		...usageRows(snapshot, config, panelContentWidth, layout, palette),
+	];
 	const groups: SidebarGroup[] = [
 		...(resizing
 			? [
 					{
 						name: "resize",
-						rows: [palette.paint("warning", "RESIZE · drag divider"), ""],
+						rows: [palette.paint("warning", "Resize · drag divider"), ""],
 						required: true,
 						dropRank: Number.POSITIVE_INFINITY,
 					},
@@ -918,27 +943,19 @@ export function renderSidebarLines(
 		},
 		{
 			name: "todos",
-			panel: "TODOS",
+			panel: todosTitle(snapshot),
 			panelRole: "accent",
 			rows: config.showSidebarTodos ? todosRows(snapshot, palette) : [],
 			required: false,
 			dropRank: 90,
 		},
 		{
-			name: "context",
-			panel: "CONTEXT",
-			panelRole: contextRole(snapshot, config),
-			rows: contextRows(snapshot, config, panelContentWidth, layout, palette),
-			required: true,
-			dropRank: Number.POSITIVE_INFINITY,
-		},
-		{
 			name: "workspaceCore",
 			panel: "WORKSPACE",
 			panelRole: "accent",
 			rows: workspace.identity,
-			required: false,
-			dropRank: 30,
+			required: true,
+			dropRank: Number.POSITIVE_INFINITY,
 		},
 		{
 			name: "workspaceLocation",
@@ -953,8 +970,8 @@ export function renderSidebarLines(
 			panel: "WORKSPACE",
 			panelRole: "accent",
 			rows: workspace.pulseCore,
-			required: false,
-			dropRank: 30,
+			required: true,
+			dropRank: Number.POSITIVE_INFINITY,
 		},
 		{
 			name: "workspaceDetails",
@@ -976,9 +993,9 @@ export function renderSidebarLines(
 			name: "usage",
 			panel: "USAGE",
 			panelRole: "output",
-			rows: usageRows(snapshot, config, panelContentWidth, layout, palette),
-			required: false,
-			dropRank: 20,
+			rows: usage,
+			required: true,
+			dropRank: Number.POSITIVE_INFINITY,
 		},
 		{
 			name: "toolsStatus",
@@ -1028,7 +1045,7 @@ export function renderSidebarLines(
 			const rows = contributedRows(panel, palette);
 			ordered.push({
 				name: `contributed:${panel.id}`,
-				panel: sanitize(panel.title).toUpperCase() || panel.id,
+				panel: properCase(panel.title) || panel.id,
 				panelId: panel.id,
 				panelRole: panel.role ?? "accent",
 				rows: rows.length > 0 ? rows : [palette.paint("dim", "No data")],

@@ -96,11 +96,12 @@ function resolveSidebarLayout(
 	const user = layers.user;
 	if (user && "sidebarPanelLayout" in user) {
 		const parsed = parseSidebarLayout(user.sidebarPanelLayout, warnings);
-		return {
-			layout: parsed ?? cloneSidebarLayout(base.sidebarPanelLayout),
-			warnings,
-			authoritative: true,
-		};
+		if (parsed)
+			return {
+				layout: parsed,
+				warnings,
+				authoritative: true,
+			};
 	}
 	const layout = cloneSidebarLayout(base.sidebarPanelLayout);
 	// Legacy Agent and TODOS visibility are global-user-only compatibility inputs.
@@ -502,11 +503,11 @@ export function mergeConfig(...inputs: unknown[]): ConfigLoadResult {
 	const config = cloneConfig(DEFAULT_CONFIG);
 	const warnings: string[] = [];
 	for (const input of inputs) applyNonDisplay(input, config, warnings);
-	const records = inputs.map(record).filter((item): item is Record<string, unknown> => !!item);
+	const [userRecord, projectRecord, sessionRecord] = inputs.map(record);
 	const displayLayers: DisplayLayerState = {
-		...(records[0] ? { user: records[0] } : {}),
-		...(records[1] ? { project: records[1] } : {}),
-		...(records[2] ? { session: records[2] } : {}),
+		...(userRecord ? { user: userRecord } : {}),
+		...(projectRecord ? { project: projectRecord } : {}),
+		...(sessionRecord ? { session: sessionRecord } : {}),
 	};
 	const resolved = resolveDisplayLayers(displayLayers);
 	const sidebar = resolveSidebarLayout(displayLayers);
@@ -514,6 +515,7 @@ export function mergeConfig(...inputs: unknown[]): ConfigLoadResult {
 	const global = cloneConfig(DEFAULT_CONFIG);
 	applyNonDisplay(inputs[0], global, []);
 	config.showSidebarOnStartup = global.showSidebarOnStartup;
+	config.completionNotifications = global.completionNotifications;
 	if (sidebar.authoritative) {
 		config.showSidebarAgent =
 			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
