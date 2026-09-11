@@ -172,11 +172,11 @@ function renderDock(
 	const safeHeight = Math.max(0, Math.trunc(height));
 	if (safeWidth <= 0 || safeHeight <= 0) return [];
 	const contentWidth = Math.max(0, safeWidth - 2);
-	const divider = palette.paint(resizing ? "warning" : "dim", "│");
+	const edge = resizing ? `${palette.paint("warning", "│")} ` : "  ";
 	return Array.from({ length: safeHeight }, (_, index) => {
 		const content = truncateToWidth(rows[index] ?? "", contentWidth, "");
 		const padding = " ".repeat(Math.max(0, contentWidth - visibleWidth(content)));
-		return truncateToWidth(`${divider} ${content}${padding}`, safeWidth, "");
+		return truncateToWidth(`${edge}${content}${padding}`, safeWidth, "");
 	});
 }
 
@@ -597,8 +597,12 @@ function todosRows(snapshot: SidebarSnapshot, palette: AtelierPalette): string[]
 	if (todoList.length === 0) return [];
 
 	const rows: string[] = [];
+	const visible =
+		snapshot.runActivity.phase === "running"
+			? todoList.filter((todo) => todo.status === "in_progress")
+			: todoList;
 
-	for (const todo of todoList) {
+	for (const todo of visible) {
 		let check: string;
 		if (todo.status === "completed") check = palette.paint("ready", "✓");
 		else if (todo.status === "in_progress") check = palette.paint("warning", "◐");
@@ -745,19 +749,6 @@ function renderGroups(
 	return renderGroupsFrame(groups, width, palette, theme, collapsedPanelIds).rows;
 }
 
-function panelIdForTitle(title: string): string | undefined {
-	return {
-		AGENT: "agent",
-		ACTIVITY: "activity",
-		SUBAGENTS: "subagents",
-		ALERTS: "alerts",
-		TODOS: "todos",
-		WORKSPACE: "workspace",
-		USAGE: "usage",
-		TOOLS: "tools",
-	}[title];
-}
-
 function contributedRows(panel: SidebarPanelData, palette: AtelierPalette): string[] {
 	const rows = panel.rows.slice(0, SIDEBAR_PANEL_MAX_ROWS).map((row) => {
 		const text = sanitizeSidebarPanelText(
@@ -791,10 +782,14 @@ function toolActivityRow(
 	contentWidth: number,
 	palette: AtelierPalette,
 	now: number,
+	extraLive = 0,
 ): string {
 	const safeName = sanitize(tool.name) || "tool";
 	const safeSummary = sanitize(tool.summary);
-	const status = toolStatusLabel(tool, now);
+	const status =
+		extraLive > 0 && tool.status === "running"
+			? `${durationForTool(tool, now)} · +${finiteCount(extraLive)}`
+			: toolStatusLabel(tool, now);
 	const statusWidth = visibleWidth(status);
 	const nameWidth = Math.min(Math.max(visibleWidth(safeName), 4), 10, Math.max(0, contentWidth));
 	const summaryWidth = Math.max(0, contentWidth - nameWidth - statusWidth - 2);
@@ -830,16 +825,25 @@ function activityRows(
 	palette: AtelierPalette,
 	now: number,
 ): ActivityGroups {
+	const liveTurn = activity.phase === "running";
 	const activeIds = new Set(activity.activeTools.map((tool) => tool.id));
-	const active = activity.activeTools
+	const sortedActive = activity.activeTools
 		.map((tool, index) => ({ index, tool }))
 		.sort((left, right) => left.tool.startedAt - right.tool.startedAt || left.index - right.index)
-		.map(({ tool }) => ({ id: tool.id, row: toolActivityRow(tool, contentWidth, palette, now) }));
-	const recent = activity.recentTools
-		.filter((tool) => !activeIds.has(tool.id))
-		.slice(0, 3)
-		.map((tool) => ({ id: tool.id, row: toolActivityRow(tool, contentWidth, palette, now) }));
-	const aggregateText = aggregateActivityText(activity);
+		.map(({ tool }) => tool);
+	const visibleActive = liveTurn ? sortedActive.slice(-1) : sortedActive;
+	const extraLive = liveTurn ? Math.max(0, sortedActive.length - visibleActive.length) : 0;
+	const active = visibleActive.map((tool) => ({
+		id: tool.id,
+		row: toolActivityRow(tool, contentWidth, palette, now, extraLive),
+	}));
+	const recent = liveTurn
+		? []
+		: activity.recentTools
+				.filter((tool) => !activeIds.has(tool.id))
+				.slice(0, 3)
+				.map((tool) => ({ id: tool.id, row: toolActivityRow(tool, contentWidth, palette, now) }));
+	const aggregateText = liveTurn ? "" : aggregateActivityText(activity);
 	return {
 		core: [runSummaryRow(activity, palette, now), responsePerformanceRow(activity, palette)],
 		active,
@@ -941,6 +945,7 @@ function subagentSidebarGroups(
 		rows.push({
 			name: `subagentActive:${item.id}`,
 			panel: "SUBAGENTS",
+			panelId: "subagents",
 			panelRole: subagentStatusRole(item.status),
 			rows: [subagentRow(item, contentWidth, palette, now), ...(detail ? [detail] : [])],
 			required: false,
@@ -951,6 +956,7 @@ function subagentSidebarGroups(
 		rows.push({
 			name: `subagentRecent:${item.id}`,
 			panel: "SUBAGENTS",
+			panelId: "subagents",
 			panelRole: subagentStatusRole(item.status),
 			rows: [subagentRow(item, contentWidth, palette, now)],
 			required: false,
@@ -978,6 +984,7 @@ function activitySidebarGroups(
 		{
 			name: "activityCore",
 			panel: "ACTIVITY",
+			panelId: "activity",
 			panelRole,
 			rows: groups.core,
 			required: true,
@@ -986,6 +993,7 @@ function activitySidebarGroups(
 		...groups.active.map((active, index, rows) => ({
 			name: `activityActive:${active.id}`,
 			panel: "ACTIVITY",
+			panelId: "activity",
 			panelRole,
 			rows: [active.row],
 			required: false,
@@ -994,6 +1002,7 @@ function activitySidebarGroups(
 		...groups.recent.map((recent, index) => ({
 			name: `activityRecent:${recent.id}`,
 			panel: "ACTIVITY",
+			panelId: "activity",
 			panelRole,
 			rows: [recent.row],
 			required: false,
@@ -1002,6 +1011,7 @@ function activitySidebarGroups(
 		{
 			name: "activityAggregate",
 			panel: "ACTIVITY",
+			panelId: "activity",
 			panelRole,
 			rows: groups.aggregate,
 			required: false,
@@ -1077,6 +1087,7 @@ export function renderSidebarFrame(
 					{
 						name: "agent",
 						panel: "AGENT",
+						panelId: "agent",
 						panelRole: activityRole(snapshot.activity),
 						panelJewel:
 							snapshot.activity === "working" && Math.floor(now / 400) % 2 === 1
@@ -1097,6 +1108,7 @@ export function renderSidebarFrame(
 		{
 			name: "statusDetails",
 			panel: "ALERTS",
+			panelId: "alerts",
 			panelRole: statusDetailPanelRole(snapshot),
 			rows: statusDetailRows(snapshot, palette),
 			required: false,
@@ -1106,6 +1118,7 @@ export function renderSidebarFrame(
 			name: "todos",
 			panel: "TODOS",
 			panelTitle: `TODOS · ${todoProgress(snapshot)}`,
+			panelId: "todos",
 			panelRole: "accent",
 			rows: config.showSidebarTodos ? todosRows(snapshot, palette) : [],
 			required: false,
@@ -1114,6 +1127,7 @@ export function renderSidebarFrame(
 		{
 			name: "workspaceCore",
 			panel: "WORKSPACE",
+			panelId: "workspace",
 			panelRole: "accent",
 			rows: workspace.identity,
 			required: false,
@@ -1122,6 +1136,7 @@ export function renderSidebarFrame(
 		{
 			name: "workspaceLocation",
 			panel: "WORKSPACE",
+			panelId: "workspace",
 			panelRole: "accent",
 			rows: workspace.location,
 			required: false,
@@ -1130,6 +1145,7 @@ export function renderSidebarFrame(
 		{
 			name: "workspaceCore",
 			panel: "WORKSPACE",
+			panelId: "workspace",
 			panelRole: "accent",
 			rows: workspace.pulseCore,
 			required: false,
@@ -1138,6 +1154,7 @@ export function renderSidebarFrame(
 		{
 			name: "workspaceDetails",
 			panel: "WORKSPACE",
+			panelId: "workspace",
 			panelRole: "accent",
 			rows: workspace.pulseDetails,
 			required: false,
@@ -1146,6 +1163,7 @@ export function renderSidebarFrame(
 		{
 			name: "workspaceSession",
 			panel: "WORKSPACE",
+			panelId: "workspace",
 			panelRole: "accent",
 			rows: workspace.session,
 			required: false,
@@ -1154,6 +1172,7 @@ export function renderSidebarFrame(
 		{
 			name: "usageContext",
 			panel: "USAGE",
+			panelId: "usage",
 			panelRole: "output",
 			rows: contextRows(snapshot, config, panelContentWidth, layout, palette),
 			required: true,
@@ -1162,6 +1181,7 @@ export function renderSidebarFrame(
 		{
 			name: "usageMetrics",
 			panel: "USAGE",
+			panelId: "usage",
 			panelRole: "output",
 			rows: usageMetricRows(snapshot, config, panelContentWidth, layout, palette),
 			required: false,
@@ -1170,6 +1190,7 @@ export function renderSidebarFrame(
 		{
 			name: "toolsStatus",
 			panel: "TOOLS",
+			panelId: "tools",
 			panelRole: "cache",
 			rows: toolsStatusRows(snapshot, layout.showToolNames, panelContentWidth, palette),
 			rowActions: layout.compact ? [] : [{ type: "toggle-tool-names" }],
@@ -1179,6 +1200,7 @@ export function renderSidebarFrame(
 		...toolNameRows.map((row, index, rows) => ({
 			name: `activeToolNames:${index}`,
 			panel: "TOOLS",
+			panelId: "tools",
 			panelRole: "cache" as const,
 			rows: [row],
 			required: false,
@@ -1193,9 +1215,8 @@ export function renderSidebarFrame(
 	const contributed = new Map((snapshot.sidebarPanels ?? []).map((panel) => [panel.id, panel]));
 	const grouped = new Map<string, SidebarGroup[]>();
 	for (const group of groups) {
-		const id = group.panel ? panelIdForTitle(group.panel) : undefined;
+		const id = group.panelId;
 		if (!id) continue;
-		group.panelId = id;
 		const list = grouped.get(id) ?? [];
 		list.push(group);
 		grouped.set(id, list);

@@ -1,5 +1,4 @@
-import type { TUI } from "@earendil-works/pi-tui";
-import { TuiMainScreen as PiTuiMainScreen, TuiAltScreen } from "@earendil-works/pi-tui";
+import { TuiMainScreen as PiTuiMainScreen, TuiAltScreen, type TUI } from "@earendil-works/pi-tui";
 import type { SidebarHitRegion } from "../src/sidebar-interaction.js";
 import { describe, expect, it, vi } from "vitest";
 import {
@@ -21,6 +20,16 @@ function harness(columns = 120) {
 		terminal: { columns, rows: 36, write },
 	} as unknown as TUI;
 	return { tui, baseRender, requestRender, write };
+}
+
+function concreteHarness(columns = 120) {
+	const baseRender = vi.fn((width: number) => [`base:${width}`]);
+	const requestRender = vi.fn();
+	const write = vi.fn();
+	const renderer = new PiTuiMainScreen({ columns, rows: 36, write } as never);
+	renderer.addChild({ render: baseRender, invalidate() {} });
+	renderer.requestRender = requestRender;
+	return { tui: renderer as unknown as TUI, baseRender, requestRender, write };
 }
 
 function stableTuiReference(getRenderer: () => TUI): TUI {
@@ -447,7 +456,7 @@ describe("Pi 0.84 split layout", () => {
 			},
 			invalidate() {},
 		});
-		const tui = stableTuiReference(() => renderer);
+		const tui = renderer as unknown as TUI;
 		const split = createSplitPaneController();
 
 		split.attach(tui);
@@ -719,8 +728,8 @@ describe("sidebar overlay sizing", () => {
 		expect(h.tui.render(MIN_MAIN_WIDTH + MIN_SIDEBAR_WIDTH)).toEqual(["base:92"]);
 	});
 
-	it("passes zero and negative widths through unchanged", () => {
-		const h = harness();
+	it("passes zero and negative widths through the concrete renderer", () => {
+		const h = concreteHarness();
 		const split = createSplitPaneController();
 		split.attach(h.tui);
 
@@ -749,7 +758,7 @@ describe("sidebar overlay sizing", () => {
 });
 
 describe("split pane render lifecycle", () => {
-	it("does not replace render through Pi 0.84's stable TUI reference", () => {
+	it("does not replace render through a modeless stable TUI reference", () => {
 		const h = harness();
 		const originalRender = h.tui.render;
 		const split = createSplitPaneController();
@@ -761,13 +770,26 @@ describe("split pane render lifecycle", () => {
 		expect(h.tui.render(120)).toEqual(["base:120"]);
 	});
 
+	it("adapts render through Pi 0.84's concrete regular renderer", () => {
+		const h = concreteHarness();
+		const originalRender = h.tui.render;
+		const split = createSplitPaneController();
+
+		split.attach(h.tui);
+		split.show();
+
+		expect(h.tui.render).not.toBe(originalRender);
+		expect(h.tui.render(120)).toEqual(["base:76"]);
+	});
+
 	it("attaches once and restores the exact original method on dispose", () => {
-		const h = harness();
+		const h = concreteHarness();
 		const original = h.tui.render;
 		const split = createSplitPaneController();
 
 		split.attach(h.tui);
 		const wrapped = h.tui.render;
+		expect(wrapped).not.toBe(original);
 		split.attach(h.tui);
 		expect(h.tui.render).toBe(wrapped);
 

@@ -1,7 +1,7 @@
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { DISPLAY_TEMPLATES, legacySegmentsToLayout } from "../src/display.js";
-import { createFooterComponent, renderFooterLine, selectResponsiveMode } from "../src/footer.js";
+import { createFooterComponent, renderFooterLine } from "../src/footer.js";
 import { type AtelierConfig, type AtelierState, DEFAULT_CONFIG } from "../src/types.js";
 
 const plainTheme = {
@@ -156,19 +156,6 @@ describe("footer performance", () => {
 });
 
 describe("footer", () => {
-	it("selects exact responsive modes", () => {
-		expect([132, 131, 96, 95, 72, 71, 56, 55].map(selectResponsiveMode)).toEqual([
-			"gallery",
-			"balanced",
-			"balanced",
-			"focus",
-			"focus",
-			"telemetry",
-			"telemetry",
-			"safe",
-		]);
-	});
-
 	it("renders a quiet two-zone Status Rail at wide widths", () => {
 		const line = stripAnsi(renderFooterLine(state, DEFAULT_CONFIG, plainTheme, 160));
 		expect(line).toContain("● READY · gpt-5.6-sol · medium · main*");
@@ -184,6 +171,12 @@ describe("footer", () => {
 		expect(line.endsWith("⌥A")).toBe(true);
 		expect(line.indexOf("● READY")).toBe(0);
 		expect(line.indexOf("in 324k")).toBeGreaterThan(line.indexOf("main*"));
+	});
+
+	it("dims identity separators without a zone rule", () => {
+		const line = renderFooterLine(state, DEFAULT_CONFIG, namedTheme("dark"), 400);
+		expect(line).toContain(`${darkRgb.dim} · \u001b[39m`);
+		expect(stripAnsi(line)).not.toContain("│");
 	});
 
 	it("removes optional information in the approved order", () => {

@@ -1,18 +1,15 @@
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
 import { initTheme } from "@earendil-works/pi-coding-agent";
+import { describe, expect, it, vi } from "vitest";
 import atelierExtension, {
 	PI_ATELIER_SESSION_CONFIG_ENTRY_TYPE,
 	SIDEBAR_PANEL_EVENT_CHANNEL,
 	type AtelierExtensionDependencies,
 } from "../extensions/index.js";
-import {
-	loadConfig as loadAtelierConfig,
-	saveUserConfig as persistConfig,
-	saveUserConfigPatch as persistConfigPatch,
-} from "../src/config.js";
+import { loadConfig as loadAtelierConfig, saveUserConfigPatch as persistConfigPatch } from "../src/config.js";
+import { AtelierEditor } from "../src/editor.js";
 
 function deferred<T>() {
 	let resolve!: (value: T) => void;
@@ -54,6 +51,7 @@ function harness(
 	const shortcuts: string[] = [];
 	const shortcutHandlers = new Map<string, (ctx: any) => Promise<void> | void>();
 	const setFooter = vi.fn();
+	const setEditorComponent = vi.fn();
 	let terminalInput: ((data: string) => unknown) | undefined;
 	let terminalInputUnsubscribe = vi.fn();
 	const terminalWrite = vi.fn();
@@ -150,6 +148,7 @@ function harness(
 		},
 		ui: {
 			setFooter,
+			setEditorComponent,
 			notify: vi.fn(),
 			theme: {},
 			select: vi.fn(),
@@ -182,6 +181,7 @@ function harness(
 		shortcuts,
 		shortcutHandlers,
 		setFooter,
+		setEditorComponent,
 		ctx,
 		pi,
 		overlays,
@@ -246,6 +246,8 @@ const FOOTER_THEME = {
 	italic: (text: string) => text,
 };
 
+type PersistConfig = (path: string, config: unknown) => Promise<void>;
+
 /** Builds a footer from a captured `setFooter` factory and renders it once, as Pi would. */
 function renderFooter(
 	factory: any,
@@ -304,7 +306,7 @@ async function withPersistedUserConfig(
 
 describe("extension registration", () => {
 	it("keeps the legacy saveConfig dependency source-compatible", () => {
-		const saveConfig = vi.fn<typeof persistConfig>().mockResolvedValue(undefined);
+		const saveConfig = vi.fn<PersistConfig>().mockResolvedValue(undefined);
 		const dependencies: AtelierExtensionDependencies = { saveConfig };
 
 		expect(dependencies.saveConfig).toBe(saveConfig);
@@ -368,6 +370,16 @@ describe("extension registration", () => {
 		expect(h.commands.has("atelier")).toBe(true);
 		await start(h);
 		expect(h.setFooter).toHaveBeenCalledTimes(1);
+		expect(h.setEditorComponent).toHaveBeenCalledTimes(1);
+		const editorFactory = h.setEditorComponent.mock.calls[0]?.[0];
+		expect(editorFactory).toEqual(expect.any(Function));
+		const editor = editorFactory(
+			{ requestRender: vi.fn(), terminal: { rows: 24, columns: 80 } },
+			{ borderColor: (text: string) => text, selectList: {} },
+			{ matches: () => false },
+		);
+		expect(editor).toBeInstanceOf(AtelierEditor);
+		expect(editor.render(32)[0]).toMatch(/^╭─+╮$/);
 		expect(h.shortcuts).toContain("alt+a");
 		expect(h.shortcuts).toContain("ctrl+shift+r");
 	});
@@ -427,6 +439,7 @@ describe("extension registration", () => {
 		const h = harness("print");
 		await start(h);
 		expect(h.setFooter).not.toHaveBeenCalled();
+		expect(h.setEditorComponent).not.toHaveBeenCalled();
 	});
 
 	it("starts with the Sidebar hidden when the global preference is off", async () => {
@@ -458,6 +471,7 @@ describe("extension registration", () => {
 		expect(h.notificationProcess.kill).toHaveBeenCalledOnce();
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 		expect(h.setFooter).toHaveBeenLastCalledWith(undefined);
+		expect(h.setEditorComponent).toHaveBeenLastCalledWith(undefined);
 		h.pi.events.emit("rpiv:ask-user:blocked", { active: false });
 		h.pi.events.emit("rpiv:ask-user:blocked", { active: true });
 		expect(h.spawnNotificationProcess).toHaveBeenCalledOnce();
@@ -1047,19 +1061,26 @@ describe("extension registration", () => {
 		expect(h.terminalWrite).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
 		expect(h.overlays[0]?.tui.render(120)).toEqual(["main:120"]);
 		expect(h.setFooter).toHaveBeenLastCalledWith(undefined);
+		expect(h.setEditorComponent).toHaveBeenLastCalledWith(undefined);
 	});
 
 	it("disable clears the session's own footer, not the invoking context's", async () => {
 		const h = harness();
 		await start(h);
 		h.setFooter.mockClear();
+		h.setEditorComponent.mockClear();
 		// Pi hands commands a context object that shares the session manager but not the UI.
-		const distinctUi = { ...h.ctx, ui: { ...h.ctx.ui, setFooter: vi.fn(), notify: vi.fn() } };
+		const distinctUi = {
+			...h.ctx,
+			ui: { ...h.ctx.ui, setFooter: vi.fn(), setEditorComponent: vi.fn(), notify: vi.fn() },
+		};
 
 		await command(h, "disable", distinctUi);
 
 		expect(h.setFooter).toHaveBeenCalledWith(undefined);
+		expect(h.setEditorComponent).toHaveBeenCalledWith(undefined);
 		expect(distinctUi.ui.setFooter).not.toHaveBeenCalled();
+		expect(distinctUi.ui.setEditorComponent).not.toHaveBeenCalled();
 	});
 
 	it("closes an enabled sidebar and resize input during shutdown", async () => {
@@ -1074,6 +1095,7 @@ describe("extension registration", () => {
 
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 		expect(h.setFooter).toHaveBeenLastCalledWith(undefined);
+		expect(h.setEditorComponent).toHaveBeenLastCalledWith(undefined);
 		expect(h.terminalWrite).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
 		expect(h.terminalInputUnsubscribe).toHaveBeenCalledOnce();
 		expect(h.terminalInput).toBeUndefined();
@@ -1082,7 +1104,10 @@ describe("extension registration", () => {
 	it("clears session-owned sidebar state during shutdown", async () => {
 		const h = harness();
 		h.ctx.sessionManager.getBranch.mockReturnValue([
-			todoBranchEntry({ todos: [{ id: 1, text: "Shutdown stale TODO", done: false }], nextId: 2 }),
+			todoBranchEntry({
+				tasks: [{ id: 1, subject: "Shutdown stale TODO", status: "in_progress" }],
+				nextId: 2,
+			}),
 		]);
 		await start(h);
 		await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
@@ -1252,6 +1277,40 @@ describe("extension registration", () => {
 		await Promise.resolve();
 
 		expect(h.pi.exec).toHaveBeenCalledOnce();
+	});
+
+	it("clears an in-flight Workspace Pulse result when project trust is revoked after the final Git command starts", async () => {
+		const h = harness();
+		queueWorkspacePulseInspection(h);
+		await start(h);
+		await waitForWorkspacePulseInspection(h);
+		expect(renderOverlayText(h)).toContain("stale-branch");
+		expect(renderOverlayText(h)).toContain("1 tracked");
+
+		const finalDiff = deferred<ReturnType<typeof execResult>>();
+		const results = [
+			Promise.resolve(execResult("true\n/tmp/project\n")),
+			Promise.resolve(
+				execResult(
+					"# branch.oid abcdef\0# branch.head revoked-branch\0" +
+						"1 .M N... 100644 100644 100644 abcdef abcdef tracked.txt\0? untracked.txt\0",
+				),
+			),
+			Promise.resolve(execResult("treeish\n")),
+			finalDiff.promise,
+		];
+		h.pi.exec.mockImplementation(() => results.shift() ?? Promise.resolve(execResult("", 1)));
+
+		const refresh = h.handlers.get("turn_end")?.({ type: "turn_end" }, h.ctx);
+		await vi.waitFor(() => expect(h.pi.exec).toHaveBeenCalledTimes(8));
+		h.ctx.isProjectTrusted.mockReturnValue(false);
+		finalDiff.resolve(execResult("5\t2\ttracked.txt\0"));
+		await refresh;
+
+		const sidebarText = renderOverlayText(h);
+		expect(sidebarText).not.toContain("stale-branch");
+		expect(sidebarText).not.toContain("revoked-branch");
+		expect(sidebarText).not.toContain("1 tracked");
 	});
 
 	it("stops a scheduled workspace pulse refresh after shutdown", async () => {
@@ -2122,10 +2181,10 @@ describe("extension registration", () => {
 			);
 
 			const withResult = h.overlays[0]?.component.render(44).join("\n") ?? "";
-			expect(withResult).toContain("read");
-			expect(withResult).toContain("src/run-activity.ts");
-			expect(withResult).toContain("done 1s");
-			expect(withResult).toContain("tools 1 done · 0 failed");
+			expect(withResult).toContain("Run · running");
+			expect(withResult).not.toContain("src/run-activity.ts");
+			expect(withResult).not.toContain("done 1s");
+			expect(withResult).not.toContain("tools 1 done · 0 failed");
 
 			const rendersBeforeTick = h.overlays[0]?.requestRender.mock.calls.length ?? 0;
 			vi.advanceTimersByTime(1_000);
@@ -2138,12 +2197,60 @@ describe("extension registration", () => {
 			expect(settledText).toContain("Last run · 3s");
 			expect(settledText).not.toContain("settled 3s");
 			expect(settledText).toContain("Ready");
+			expect(settledText).toContain("read");
+			expect(settledText).toContain("src/run-activity.ts");
+			expect(settledText).toContain("done 1s");
 
 			vi.advanceTimersByTime(3_000);
 			expect(h.overlays[0]?.requestRender.mock.calls.length).toBe(settledRenderCount);
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it("keeps a live Turn overlay to current work without history", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			todoBranchEntry({
+				tasks: [
+					{ id: 1, subject: "Done live TODO", status: "completed" },
+					{ id: 2, subject: "Current live TODO", status: "in_progress" },
+					{ id: 3, subject: "Queued live TODO", status: "pending" },
+				],
+				nextId: 4,
+			}),
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+		await h.handlers.get("agent_start")?.({ type: "agent_start" }, h.ctx);
+		await h.handlers.get("turn_start")?.({ type: "turn_start", turnIndex: 1, timestamp: 1_000 }, h.ctx);
+		await h.handlers.get("tool_execution_start")?.(
+			{
+				type: "tool_execution_start",
+				toolCallId: "older",
+				toolName: "read",
+				args: { path: "/tmp/project/older.ts" },
+			},
+			h.ctx,
+		);
+		await h.handlers.get("tool_execution_start")?.(
+			{
+				type: "tool_execution_start",
+				toolCallId: "newer",
+				toolName: "write",
+				args: { path: "/tmp/project/newer.ts" },
+			},
+			h.ctx,
+		);
+
+		const live = renderOverlayText(h);
+		expect(live).toContain("Turn 2 · running");
+		expect(live).toContain("newer.ts");
+		expect(live).toContain("+1");
+		expect(live).not.toContain("older.ts");
+		expect(live).toContain("Current live TODO");
+		expect(live).not.toContain("Done live TODO");
+		expect(live).not.toContain("Queued live TODO");
 	});
 
 	it("clears run activity across session reload and shutdown", async () => {
@@ -2397,7 +2504,7 @@ describe("sidebar todos integration", () => {
 			progress: "1/3",
 			texts: ["Done", "Working", "Pending"],
 		},
-	])("shows TODOS panel reconstructed from $name branch entries", async ({ details, progress, texts }) => {
+	])("shows Todos panel reconstructed from $name branch entries", async ({ details, progress, texts }) => {
 		const h = harness();
 		h.ctx.sessionManager.getBranch.mockReturnValue([todoBranchEntry(details)]);
 		await start(h);
