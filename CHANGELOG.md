@@ -11,6 +11,36 @@ This changelog tracks the divergent `integration` line. Changes may be upstreame
 - Add temporary Sidebar interaction mouse support: `Ctrl+Shift+R` now supports divider dragging, clicking the Tools disclosure row, and session-scoped widget body collapse from panel crown clicks in regular and fullscreen TUI modes while keeping mouse reporting off outside the temporary mode.
 - Harden Atelier lifecycle teardown for session-owned overlays, exception-safe cleanup, stale Sidebar snapshots, candidate startup failures, and deferred Display saves.
 
+
+## 0.10.1 — 2026-09-04
+
+- Import upstream runtime cleanup through 0.10.1 while preserving integration package identity and channel policy.
+- Remove unused internal formatters, configuration helpers, preview hooks, and legacy menu interfaces without changing the active UI or persisted configuration formats.
+- Simplify Sidebar panel identity and share TODO detail extraction across live updates and session reconstruction.
+- Replace redundant tests with active-path coverage, including concrete split-pane renderer installation and restoration.
+
+## 0.10.0 — 2026-08-28
+
+- Keep the Sidebar calm during an active Turn: Activity shows current work instead of a tool log, extra live tools fold into one row, and Todos lists only the in-progress task.
+- Drop the idle full-height dock rule so the split meets the rounded panels cleanly; the warning divider appears only while resizing.
+
+## 0.9.0 — 2026-08-28
+
+- Frame the composer with a rounded box and inner padding while preserving Pi's thinking-level and bash-mode border colors, and dim Status Rail identity separators to emphasize activity.
+- Keep Sidebar content out of fullscreen transcript selection and copy by rendering it as a separate split-layout child; this raises the minimum supported Pi version to 0.84.0.
+- Delay Workspace Pulse Git inspections until Pi trusts the project.
+- Normalize UI-facing Windows paths to forward slashes while preserving valid POSIX backslashes.
+
+## 0.8.2 — 2026-08-19
+
+- Coalesce and serialize Workspace Pulse inspection requests so short Turns avoid duplicate Git work and overlapping inspections no longer run concurrently.
+- Preserve live tool-driven Workspace Pulse updates while guaranteeing a fresh inspection at Turn end and preventing retired sessions from publishing stale results.
+
+## 0.8.1 — 2026-08-12
+
+- Preserve fullscreen transcript mouse-wheel scrolling after Sidebar resize and visibility changes by leaving Pi's persistent mouse reporting enabled.
+- Simplify upstream README prose where it does not conflict with integration-line documentation.
+
 ## 0.7.2 — 2026-08-06
 
 - Restore the non-overlapping Sidebar split in both Pi 0.84 renderer modes while retaining the non-capturing overlay as the content and safe fallback seam.
@@ -116,4 +146,4 @@ This changelog tracks the divergent `integration` line. Changes may be upstreame
 - Add editorial, minimal, and classic presets.
 - Add layered user and trusted-project JSON configuration.
 - Add width, lifecycle, failure, privacy, and package contract tests.
-- Require Pi 0.80.7+ and Node.js 22.19+.
+- Require Pi 0.84.0+ and Node.js 22.19+.

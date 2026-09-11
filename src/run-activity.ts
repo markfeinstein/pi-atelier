@@ -1,5 +1,6 @@
 import nodePath from "node:path";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+import { toDisplayPath } from "./display-path.js";
 import type { DisplayValue, ResponsePerformance } from "./types.js";
 
 export type ToolActivityStatus = "running" | "done" | "failed";
@@ -44,7 +45,6 @@ export interface RunActivityTracker {
 	startRun(now?: number): void;
 	startTurn(turnIndex: number): void;
 	startResponse(now?: number): void;
-	recordFirstToken(now?: number): void;
 	updateResponseEstimate(estimatedOutputTokens: number, now?: number): void;
 	finishResponse(outputTokens: number, now?: number): void;
 	startTool(event: ToolExecutionStartEvent, now?: number): void;
@@ -189,15 +189,6 @@ class DefaultRunActivityTracker implements RunActivityTracker {
 		this.requestStartedAt = normalizeTimestamp(now ?? Date.now());
 		this.firstTokenAt = undefined;
 		this.performance = undefined;
-		this.notify();
-	}
-
-	recordFirstToken(now?: number): void {
-		if (this.requestStartedAt === undefined || this.firstTokenAt !== undefined) return;
-		this.firstTokenAt = normalizeTimestamp(now ?? Date.now());
-		this.performance = freezePerformance({
-			ttftMs: Math.max(0, this.firstTokenAt - this.requestStartedAt),
-		});
 		this.notify();
 	}
 
@@ -429,16 +420,18 @@ function shortenPath(pathValue: string, cwd: string): string {
 		: nodePath.resolve(normalizedCwd, safePath);
 
 	const projectRelativePath = safeRelativePath(normalizedCwd, normalizedPath);
-	if (projectRelativePath !== undefined) return projectRelativePath;
+	if (projectRelativePath !== undefined) return toDisplayPath(projectRelativePath, nodePath.sep);
 
 	const home = sanitizeText(process.env.HOME ?? "");
 	if (home.length > 0) {
 		const normalizedHome = nodePath.resolve(home);
 		const homeRelativePath = safeRelativePath(normalizedHome, normalizedPath);
-		if (homeRelativePath !== undefined) return homeRelativePath === "." ? "~" : `~/${homeRelativePath}`;
+		if (homeRelativePath !== undefined) {
+			return homeRelativePath === "." ? "~" : `~/${toDisplayPath(homeRelativePath, nodePath.sep)}`;
+		}
 	}
 
-	return normalizedPath;
+	return toDisplayPath(normalizedPath, nodePath.sep);
 }
 
 function safeRelativePath(fromPath: string, toPath: string): string | undefined {

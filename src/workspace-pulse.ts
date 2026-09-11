@@ -1,5 +1,6 @@
 import { existsSync } from "node:fs";
 import nodePath from "node:path";
+import { toDisplayPath } from "./display-path.js";
 
 export interface WorkspacePulseSnapshot {
 	trackedFiles: number;
@@ -39,6 +40,93 @@ type WorkspacePulseExec = (
 export interface InspectWorkspacePulseOptions {
 	exec: WorkspacePulseExec;
 	cwd: string;
+}
+
+export interface WorkspacePulseRefresh {
+	request(): void;
+	flush(): Promise<void>;
+	dispose(): void;
+}
+
+export interface WorkspacePulseRefreshOptions {
+	inspect(): Promise<WorkspacePulseInspection>;
+	publish(inspection: WorkspacePulseInspection): void;
+	delayMs?: number;
+}
+
+/** Owns coalescing, serialization, and freshness for Workspace Pulse inspections. */
+export function createWorkspacePulseRefresh(options: WorkspacePulseRefreshOptions): WorkspacePulseRefresh {
+	const delayMs = Math.max(0, Math.trunc(options.delayMs ?? 250));
+	let disposed = false;
+	let requestedVersion = 0;
+	let completedVersion = 0;
+	let timer: ReturnType<typeof setTimeout> | undefined;
+	let inFlight: Promise<void> | undefined;
+
+	const clearTimer = (): void => {
+		if (timer) clearTimeout(timer);
+		timer = undefined;
+	};
+
+	const runInspection = (): Promise<void> => {
+		const version = requestedVersion;
+		const running = (async () => {
+			let inspection: WorkspacePulseInspection;
+			try {
+				inspection = await options.inspect();
+			} catch {
+				inspection = { kind: "unavailable" };
+			}
+			if (disposed) return;
+			completedVersion = Math.max(completedVersion, version);
+			options.publish(inspection);
+		})();
+		inFlight = running;
+		void running.then(
+			() => {
+				if (inFlight === running) inFlight = undefined;
+			},
+			() => {
+				if (inFlight === running) inFlight = undefined;
+			},
+		);
+		return running;
+	};
+
+	const runScheduled = async (version: number): Promise<void> => {
+		if (disposed || version !== requestedVersion) return;
+		if (inFlight) await inFlight;
+		if (disposed || version !== requestedVersion || completedVersion >= version) return;
+		await runInspection();
+	};
+
+	return {
+		request() {
+			if (disposed) return;
+			const version = ++requestedVersion;
+			clearTimer();
+			timer = setTimeout(() => {
+				timer = undefined;
+				void runScheduled(version);
+			}, delayMs);
+			timer.unref?.();
+		},
+		async flush() {
+			if (disposed) return;
+			const targetVersion = ++requestedVersion;
+			clearTimer();
+			while (!disposed && completedVersion < targetVersion) {
+				if (inFlight) await inFlight;
+				else await runInspection();
+			}
+		},
+		dispose() {
+			if (disposed) return;
+			disposed = true;
+			requestedVersion += 1;
+			clearTimer();
+		},
+	};
 }
 
 const EMPTY_SNAPSHOT: WorkspacePulseSnapshot = {
@@ -208,7 +296,7 @@ async function inspectWorkspacePulseUnchecked(
 	return {
 		kind: "available",
 		root,
-		relativeCwd: nodePath.relative(root, options.cwd),
+		relativeCwd: toDisplayPath(nodePath.relative(root, options.cwd), nodePath.sep),
 		...(parsedStatus.branch ? { branch: parsedStatus.branch } : {}),
 		snapshot: {
 			...EMPTY_SNAPSHOT,

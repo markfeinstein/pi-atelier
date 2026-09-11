@@ -13,7 +13,7 @@ This repository's canonical development branch is `integration`. It permanently 
 
 ## Set up a checkout
 
-Pi Atelier requires Node.js `22.19.0` or newer, Pi `0.80.7` or newer, and an interactive TUI.
+Pi Atelier requires Node.js `22.19.0` or newer, Pi `0.84.0` or newer, and an interactive TUI.
 
 ```bash
 git clone --branch integration https://github.com/markfeinstein/pi-atelier.git

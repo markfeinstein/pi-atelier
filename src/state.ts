@@ -14,12 +14,12 @@ import type {
 	SessionDisplayOverride,
 } from "./types.js";
 import {
+	createWorkspacePulseRefresh,
 	inspectWorkspacePulse,
 	type WorkspacePulseData,
 	type WorkspacePulseInspection,
+	type WorkspacePulseRefresh,
 } from "./workspace-pulse.js";
-
-const WORKSPACE_REFRESH_DEBOUNCE_MS = 250;
 const SESSION_DISPLAY_OVERRIDE_KEYS = [
 	"preset",
 	"density",
@@ -41,19 +41,27 @@ export interface RuntimeDependencies {
 	inspectWorkspace?(): Promise<WorkspacePulseInspection>;
 }
 
+export function createInertAtelierState(autoCompact: boolean | null = null): AtelierState {
+	return {
+		activity: "ready",
+		dirty: false,
+		workspacePulse: { status: "unavailable" },
+		metrics: aggregateMetrics([], { subscription: false, autoCompact }),
+		extensionStatuses: [],
+	};
+}
+
 export class AtelierRuntime {
 	readonly #pi: ExtensionAPI;
 	readonly #ctx: ExtensionContext;
 	readonly #autoCompact: boolean | null;
 	readonly #random: () => number;
 	readonly #requestRender: () => void;
-	readonly #inspectWorkspace: () => Promise<WorkspacePulseInspection>;
+	readonly #workspacePulseRefresh: WorkspacePulseRefresh;
 	#config: AtelierConfig;
 	#displayLayers: DisplayLayerState;
 	#displayProvenance: DisplayProvenance;
 	#disposed = false;
-	#workspaceRefreshGeneration = 0;
-	#workspaceRefreshTimer: ReturnType<typeof setTimeout> | undefined;
 	#lastWorkspaceData: WorkspacePulseData | undefined;
 	#state: AtelierState;
 
@@ -67,25 +75,39 @@ export class AtelierRuntime {
 		this.#autoCompact = dependencies.autoCompact;
 		this.#random = dependencies.random ?? Math.random;
 		this.#requestRender = dependencies.requestRender;
-		this.#inspectWorkspace =
-			dependencies.inspectWorkspace ??
-			(() => inspectWorkspacePulse({ exec: this.#pi.exec.bind(this.#pi), cwd: this.#ctx.cwd }));
+		const inspectWorkspace = async (): Promise<WorkspacePulseInspection> => {
+			if (!this.#canInspectWorkspace()) return { kind: "unavailable" };
+			return dependencies.inspectWorkspace
+				? dependencies.inspectWorkspace()
+				: inspectWorkspacePulse({
+						exec: async (command, args, options) =>
+							this.#canInspectWorkspace()
+								? this.#pi.exec(command, args, options)
+								: { stdout: "", stderr: "", code: 1, killed: true },
+						cwd: this.#ctx.cwd,
+					});
+		};
+		this.#workspacePulseRefresh = createWorkspacePulseRefresh({
+			inspect: inspectWorkspace,
+			publish: (inspection) => this.#applyWorkspacePulseInspection(inspection),
+		});
 		this.#state = this.#inertState(this.#ctx.getContextUsage());
+		if (!this.#ctx.isProjectTrusted()) {
+			this.#state = { ...this.#state, workspacePulse: { status: "unavailable" } };
+		}
 		this.refreshUsage();
 	}
 
 	/** State with no branch, workspace data, or usage history; context is included only when explicit. */
 	#inertState(context: ReturnType<ExtensionContext["getContextUsage"]> = undefined): AtelierState {
 		return {
-			activity: "ready",
-			dirty: false,
+			...createInertAtelierState(this.#autoCompact),
 			workspacePulse: { status: "inspecting" },
 			metrics: aggregateMetrics([], {
 				subscription: false,
 				autoCompact: this.#autoCompact,
 				...(context ? { context } : {}),
 			}),
-			extensionStatuses: [],
 		};
 	}
 
@@ -236,29 +258,20 @@ export class AtelierRuntime {
 		this.#invalidate();
 	}
 
-	scheduleWorkspacePulseRefresh(delayMs = WORKSPACE_REFRESH_DEBOUNCE_MS): void {
-		if (this.#disposed) return;
-		if (this.#workspaceRefreshTimer) clearTimeout(this.#workspaceRefreshTimer);
-		this.#workspaceRefreshTimer = setTimeout(
-			() => {
-				this.#workspaceRefreshTimer = undefined;
-				void this.refreshWorkspacePulse();
-			},
-			Math.max(0, Math.trunc(delayMs)),
-		);
-		this.#workspaceRefreshTimer.unref?.();
+	#canInspectWorkspace(): boolean {
+		return !this.#disposed && this.#ctx.isProjectTrusted();
 	}
 
-	async refreshWorkspacePulse(): Promise<void> {
-		if (this.#disposed) return;
-		if (this.#workspaceRefreshTimer) {
-			clearTimeout(this.#workspaceRefreshTimer);
-			this.#workspaceRefreshTimer = undefined;
-		}
-		const generation = ++this.#workspaceRefreshGeneration;
-		const inspection = await this.#inspectWorkspace();
-		if (this.#disposed || generation !== this.#workspaceRefreshGeneration) return;
+	scheduleWorkspacePulseRefresh(): void {
+		if (this.#canInspectWorkspace()) this.#workspacePulseRefresh.request();
+	}
 
+	async flushWorkspacePulseRefresh(): Promise<void> {
+		if (this.#canInspectWorkspace()) await this.#workspacePulseRefresh.flush();
+	}
+
+	#applyWorkspacePulseInspection(inspection: WorkspacePulseInspection): void {
+		if (this.#disposed) return;
 		if (inspection.kind === "available") {
 			const { kind: _kind, ...data } = inspection;
 			this.#lastWorkspaceData = data;
@@ -296,22 +309,25 @@ export class AtelierRuntime {
 	}
 
 	async refreshGitState(): Promise<void> {
-		await this.refreshWorkspacePulse();
+		await this.flushWorkspacePulseRefresh();
 	}
 
 	async refreshGitDirty(): Promise<void> {
-		await this.refreshWorkspacePulse();
+		await this.flushWorkspacePulseRefresh();
+	}
+
+	async refreshWorkspacePulse(): Promise<void> {
+		await this.flushWorkspacePulseRefresh();
 	}
 
 	/**
 	 * Stops scheduled work and resets to inert state, so a footer that outlives its
 	 * `setFooter(undefined)` cannot keep reporting the retired session's branch, usage, or activity.
 	 */
+
 	dispose(): void {
 		this.#disposed = true;
-		this.#workspaceRefreshGeneration += 1;
-		if (this.#workspaceRefreshTimer) clearTimeout(this.#workspaceRefreshTimer);
-		this.#workspaceRefreshTimer = undefined;
+		this.#workspacePulseRefresh.dispose();
 		this.#lastWorkspaceData = undefined;
 		this.#state = { ...this.#inertState(), workspacePulse: { status: "unavailable" } };
 	}

@@ -1,13 +1,12 @@
-import { TuiAltScreen, TuiMainScreen as PiTuiMainScreen } from "@earendil-works/pi-tui";
-import type { TUI } from "@earendil-works/pi-tui";
+import { TuiMainScreen as PiTuiMainScreen, TuiAltScreen, type TUI } from "@earendil-works/pi-tui";
 import type { SidebarHitRegion } from "../src/sidebar-interaction.js";
 import { describe, expect, it, vi } from "vitest";
 import {
+	createSplitPaneController,
 	DEFAULT_SIDEBAR_WIDTH,
 	MAX_SIDEBAR_WIDTH,
 	MIN_MAIN_WIDTH,
 	MIN_SIDEBAR_WIDTH,
-	createSplitPaneController,
 	parseSgrMouseEvent,
 } from "../src/split-pane.js";
 
@@ -21,6 +20,16 @@ function harness(columns = 120) {
 		terminal: { columns, rows: 36, write },
 	} as unknown as TUI;
 	return { tui, baseRender, requestRender, write };
+}
+
+function concreteHarness(columns = 120) {
+	const baseRender = vi.fn((width: number) => [`base:${width}`]);
+	const requestRender = vi.fn();
+	const write = vi.fn();
+	const renderer = new PiTuiMainScreen({ columns, rows: 36, write } as never);
+	renderer.addChild({ render: baseRender, invalidate() {} });
+	renderer.requestRender = requestRender;
+	return { tui: renderer as unknown as TUI, baseRender, requestRender, write };
 }
 
 function stableTuiReference(getRenderer: () => TUI): TUI {
@@ -214,6 +223,84 @@ describe("temporary Resize mode", () => {
 		expect(split.isResizing()).toBe(false);
 		expect(listeners.size).toBe(1);
 	});
+	it("keeps fullscreen transcript wheel scrolling after Resize and sidebar visibility changes", () => {
+		let deliverInput: ((data: string) => void) | undefined;
+		let mouseReporting = false;
+		const terminal = {
+			columns: 120,
+			rows: 8,
+			write: vi.fn((data: string) => {
+				if (data.includes("\u001b[?1006h")) mouseReporting = true;
+				if (data.includes("\u001b[?1006l")) mouseReporting = false;
+			}),
+			start: vi.fn((onInput: (data: string) => void) => {
+				deliverInput = onInput;
+			}),
+			stop: vi.fn(),
+			hideCursor: vi.fn(),
+			showCursor: vi.fn(),
+			sendWheelUp() {
+				if (mouseReporting) deliverInput?.("\u001b[<64;1;1M");
+			},
+		};
+		const renderer = new TuiAltScreen(terminal as never);
+		renderer.addChild({
+			render: () => Array.from({ length: 30 }, (_, index) => `line ${index}`),
+			invalidate() {},
+		});
+		renderer.start();
+		renderer.renderNow();
+		const split = createSplitPaneController({
+			subscribeInput: (handler) => renderer.addInputListener(handler),
+		});
+		split.attach(stableTuiReference(() => renderer));
+		split.show();
+
+		expect(split.beginResize()).toBe(true);
+		split.finishResize();
+		split.hide();
+		split.show();
+		renderer.renderNow();
+		const viewportBeforeWheel = renderer.viewportTop;
+		terminal.sendWheelUp();
+
+		expect(renderer.viewportTop).toBe(viewportBeforeWheel - 1);
+		renderer.stop();
+	});
+
+	it("temporarily manages mouse reporting for unsupported fullscreen renderers", () => {
+		const renderer = new FullscreenRenderer();
+		const split = createSplitPaneController({ subscribeInput: () => vi.fn() });
+		split.attach(stableTuiReference(() => renderer as unknown as TUI));
+		split.show();
+
+		expect(split.beginResize()).toBe(true);
+		split.finishResize();
+
+		expect(renderer.terminal.write.mock.calls).toEqual([
+			["\u001b[?1002h\u001b[?1006h"],
+			["\u001b[?1006l\u001b[?1002l"],
+		]);
+	});
+
+	it("cleans mouse reporting on the renderer that entered Resize mode", () => {
+		let renderer: TUI = new TuiMainScreen() as unknown as TUI;
+		const split = createSplitPaneController({ subscribeInput: () => vi.fn() });
+		split.attach(stableTuiReference(() => renderer));
+		split.show();
+
+		expect(split.beginResize()).toBe(true);
+		const resizeRenderer = renderer as unknown as TuiMainScreen;
+		expect(resizeRenderer.terminal.write).toHaveBeenCalledWith("\u001b[?1002h\u001b[?1006h");
+		renderer = new FullscreenRenderer() as unknown as TUI;
+		const fullscreenRenderer = renderer as unknown as FullscreenRenderer;
+
+		split.finishResize();
+
+		expect(resizeRenderer.terminal.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
+		expect(fullscreenRenderer.terminal.write).not.toHaveBeenCalled();
+	});
+
 	it("does not start dragging for wheel or non-primary mouse events", () => {
 		const h = resizeHarness();
 		h.split.beginResize();
@@ -369,7 +456,7 @@ describe("Pi 0.84 split layout", () => {
 			},
 			invalidate() {},
 		});
-		const tui = stableTuiReference(() => renderer);
+		const tui = renderer as unknown as TUI;
 		const split = createSplitPaneController();
 
 		split.attach(tui);
@@ -641,8 +728,8 @@ describe("sidebar overlay sizing", () => {
 		expect(h.tui.render(MIN_MAIN_WIDTH + MIN_SIDEBAR_WIDTH)).toEqual(["base:92"]);
 	});
 
-	it("passes zero and negative widths through unchanged", () => {
-		const h = harness();
+	it("passes zero and negative widths through the concrete renderer", () => {
+		const h = concreteHarness();
 		const split = createSplitPaneController();
 		split.attach(h.tui);
 
@@ -671,7 +758,7 @@ describe("sidebar overlay sizing", () => {
 });
 
 describe("split pane render lifecycle", () => {
-	it("does not replace render through Pi 0.84's stable TUI reference", () => {
+	it("does not replace render through a modeless stable TUI reference", () => {
 		const h = harness();
 		const originalRender = h.tui.render;
 		const split = createSplitPaneController();
@@ -683,13 +770,26 @@ describe("split pane render lifecycle", () => {
 		expect(h.tui.render(120)).toEqual(["base:120"]);
 	});
 
+	it("adapts render through Pi 0.84's concrete regular renderer", () => {
+		const h = concreteHarness();
+		const originalRender = h.tui.render;
+		const split = createSplitPaneController();
+
+		split.attach(h.tui);
+		split.show();
+
+		expect(h.tui.render).not.toBe(originalRender);
+		expect(h.tui.render(120)).toEqual(["base:76"]);
+	});
+
 	it("attaches once and restores the exact original method on dispose", () => {
-		const h = harness();
+		const h = concreteHarness();
 		const original = h.tui.render;
 		const split = createSplitPaneController();
 
 		split.attach(h.tui);
 		const wrapped = h.tui.render;
+		expect(wrapped).not.toBe(original);
 		split.attach(h.tui);
 		expect(h.tui.render).toBe(wrapped);
 

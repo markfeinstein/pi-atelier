@@ -11,8 +11,6 @@ export interface ThemeLike {
 	italic(text: string): string;
 }
 
-export type ResponsiveMode = "gallery" | "balanced" | "focus" | "telemetry" | "safe";
-
 const WORKING_DOT_FRAMES = ["...", "..", "."] as const;
 const WORKING_ANIMATION_INTERVAL_MS = 400;
 
@@ -66,14 +64,6 @@ const sanitize = (text: string): string =>
 		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
 		.replace(/\s+/g, " ")
 		.trim();
-
-export function selectResponsiveMode(width: number): ResponsiveMode {
-	if (width >= 132) return "gallery";
-	if (width >= 96) return "balanced";
-	if (width >= 72) return "focus";
-	if (width >= 56) return "telemetry";
-	return "safe";
-}
 
 function paintValue(value: DisplayValue, role: PaletteRole, palette: AtelierPalette): string {
 	return palette.paint(value.available ? role : "dim", value.text);
@@ -351,14 +341,14 @@ function renderItems(items: FooterItem[], compactIds: Set<FooterItemId>, separat
 		.join(separator);
 }
 
-function compose(items: FooterItem[], width: number): string {
+function compose(items: FooterItem[], width: number, leftSeparator: string): string {
 	const active = [...items];
 	const compactIds = new Set<FooterItemId>();
 	const left = () =>
 		renderItems(
 			active.filter((item) => item.zone === "left"),
 			compactIds,
-			" · ",
+			leftSeparator,
 		);
 	const right = () =>
 		renderItems(
@@ -396,7 +386,12 @@ export function renderFooterLine(
 	workingDots = "...",
 ): string {
 	if (width <= 0) return "";
-	const line = compose(buildItems(state, config, theme, colorEnabled, workingDots), width);
+	const palette = createPalette(theme, colorEnabled);
+	const line = compose(
+		buildItems(state, config, theme, colorEnabled, workingDots),
+		width,
+		palette.paint("dim", " · "),
+	);
 	return truncateToWidth(line, width, "");
 }
 

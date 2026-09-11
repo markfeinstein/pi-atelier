@@ -1,14 +1,8 @@
-import { mkdtemp, readdir, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { beforeEach, describe, expect, it } from "vitest";
-import {
-	loadConfig,
-	mergeConfig,
-	saveUserConfig,
-	saveUserConfigPatch,
-	validateConfig,
-} from "../src/config.js";
+import { loadConfig, saveUserConfigPatch, validateConfig } from "../src/config.js";
 import { DISPLAY_TEMPLATES, PRODUCT_SEGMENT_ORDER } from "../src/display.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
@@ -25,6 +19,30 @@ beforeEach(async () => {
 
 const visibility = (layout: typeof DEFAULT_CONFIG.segmentLayout, id: string) =>
 	layout.find((entry) => entry.id === id)?.visible;
+
+const isRecord = (value: unknown): value is Record<string, unknown> =>
+	typeof value === "object" && value !== null && !Array.isArray(value);
+
+function layerColorScheme(previous: unknown, next: unknown): unknown {
+	if (typeof next === "string") return next;
+	if (!isRecord(next)) return previous;
+	const base = typeof previous === "string" ? { base: previous } : isRecord(previous) ? previous : {};
+	return { ...base, ...next };
+}
+
+function mergeConfig(...inputs: unknown[]): ReturnType<typeof validateConfig> {
+	let merged: Record<string, unknown> = {};
+	let colorScheme: unknown;
+	for (const input of inputs) {
+		if (!isRecord(input)) continue;
+		merged = { ...merged, ...input };
+		if ("colorScheme" in input) {
+			colorScheme = layerColorScheme(colorScheme ?? DEFAULT_CONFIG.colorScheme, input.colorScheme);
+			merged.colorScheme = colorScheme;
+		}
+	}
+	return validateConfig(merged);
+}
 
 describe("configuration", () => {
 	it("defines complete defaults and compatibility templates", () => {
@@ -194,26 +212,6 @@ describe("configuration", () => {
 			session: { showSidebarAgent: true },
 		});
 		expect(result.config.showSidebarAgent).toBe(false);
-	});
-
-	it("keeps legacy Agent and TODOS visibility global-user-only in mergeConfig", () => {
-		expect(
-			mergeConfig(
-				{ showSidebarAgent: false, showSidebarTodos: false },
-				{ showSidebarAgent: true, showSidebarTodos: true },
-				{ showSidebarAgent: true, showSidebarTodos: true },
-			).config,
-		).toMatchObject({ showSidebarAgent: false, showSidebarTodos: false });
-		expect(
-			mergeConfig(
-				{},
-				{ showSidebarAgent: false, showSidebarTodos: false },
-				{
-					showSidebarAgent: false,
-					showSidebarTodos: false,
-				},
-			).config,
-		).toMatchObject({ showSidebarAgent: true, showSidebarTodos: true });
 	});
 
 	it("ignores project and session legacy Sidebar visibility when the user omits it", async () => {
@@ -409,6 +407,7 @@ describe("configuration", () => {
 			contextWarning: 95,
 			contextDanger: 80,
 			showSidebarToolNames: "yes",
+			showSidebarOnStartup: "yes",
 			workingLabels: ["", 5, "THINKING"],
 		});
 		expect(result.config.contextWarning).toBe(70);
@@ -417,6 +416,7 @@ describe("configuration", () => {
 			expect.arrayContaining([
 				expect.stringContaining("threshold"),
 				"showSidebarToolNames must be boolean",
+				"showSidebarOnStartup must be boolean",
 				"workingLabels entries must be non-empty strings",
 			]),
 		);
@@ -439,20 +439,6 @@ describe("configuration", () => {
 		expect(result.config.showSidebarOnStartup).toBe(false);
 	});
 
-	it("keeps the Sidebar startup preference global when merging config layers", () => {
-		expect(
-			mergeConfig(
-				{ showSidebarOnStartup: false },
-				{ showSidebarOnStartup: true },
-				{ showSidebarOnStartup: true },
-			).config.showSidebarOnStartup,
-		).toBe(false);
-		expect(validateConfig({ showSidebarOnStartup: "yes" }).warnings).toContain(
-			"showSidebarOnStartup must be boolean",
-		);
-		expect(DEFAULT_CONFIG.showSidebarOnStartup).toBe(true);
-	});
-
 	it("loads persisted showSidebarAgent false from user config", async () => {
 		await writeJson(userPath, { showSidebarAgent: false });
 		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });
@@ -470,12 +456,6 @@ describe("configuration", () => {
 		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });
 		expect(result.config).toEqual(DEFAULT_CONFIG);
 		expect(result.warnings).toHaveLength(1);
-	});
-
-	it("saves valid JSON atomically without leaving temporary files", async () => {
-		await saveUserConfig(userPath, { ...DEFAULT_CONFIG, preset: "custom" });
-		expect(JSON.parse(await readFile(userPath, "utf8"))).toMatchObject({ preset: "custom" });
-		expect((await readdir(root)).filter((name) => name.endsWith(".tmp"))).toEqual([]);
 	});
 
 	it("patches one preference without losing unknown fields", async () => {

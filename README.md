@@ -51,8 +51,8 @@ Pi Atelier defaults to its fixed dark Midnight Spectrum. Selecting a light, dark
 
 ## Requirements
 
-- Pi `0.80.7` or newer
-- Node.js `22.19.0` or newer
+- Pi 0.84.0 or newer
+- Node.js 22.19.0 or newer
 - Interactive TUI mode
 
 ## Install
@@ -130,7 +130,7 @@ Additional commands:
 
 ## Sidebar
 
-The sidebar starts shown by default whenever the extension initializes. Use **Settings → Sidebar on startup** to change this global user preference; it is saved immediately and applies from the next session or reload. An explicit `on` or `off` still applies only to the current runtime. Use these commands to control it explicitly:
+The sidebar starts shown by default whenever the extension initializes and hides when the terminal is too narrow. Use **Settings → Sidebar on startup** to change this global user preference; it is saved immediately and applies from the next session or reload. An explicit `on` or `off` still applies only to the current runtime. Use these commands to control it explicitly:
 
 ```text
 /atelier sidebar       # toggle between shown and hidden
@@ -169,6 +169,8 @@ The sidebar uses Pi's supported non-capturing overlay seam while reserving its c
 Press `Ctrl+Shift+R` to enter temporary Sidebar interaction mode. Drag from the sidebar divider or either adjacent column and release to resize; click the Tools disclosure row to expand or collapse active tool names; click any panel crown to collapse or expand that widget body for the current session. Use Left/Right for one-column width adjustments, Shift+Left/Shift+Right for four-column adjustments, Enter to accept the current width, or Escape to restore the previous width. Mouse reporting is active only during this temporary interaction mode, so ordinary terminal text selection is unchanged at all other times.
 
 Pi 0.84 cannot switch between regular and fullscreen renderers while any overlay is open. Hide the sidebar with `/atelier sidebar off`, switch TUI mode, then show it again with `/atelier sidebar on`. Atelier restores the non-overlapping split after the renderer switch. In fullscreen mode, Atelier prioritizes its temporary interaction listener ahead of Pi's transcript mouse-selection listener only while the mode is active, then removes it on exit.
+
+In fullscreen mode, the split-layout sidebar remains a separate child so transcript selection and copy stay scoped to Pi output. The composer uses Atelier's rounded frame with inner padding where Pi exposes the editor customization seam; Pi supports one custom footer and one custom editor at a time, so extension load order determines which chrome is visible.
 
 The Todos panel accepts both legacy Pi `todo` details (`todos` items with `done` booleans) and `@juicesharp/rpiv-todo` task details (`tasks` items with `pending`, `in_progress`, or `completed` states). The `@juicesharp/rpiv-todo` extension is optional and must be installed separately; Pi Atelier neither installs nor requires it. The panel shows `done/total` progress, status indicators (`✓` completed, `◐` in progress, `○` pending), and task IDs.
 
