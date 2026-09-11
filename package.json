@@ -53,7 +53,7 @@
 		"@earendil-works/pi-tui": "0.84.0",
 		"@types/node": "24.12.4",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
+		"vitest": "4.1.11"
 	},
 	"engines": {
 		"node": ">=22.19.0"
