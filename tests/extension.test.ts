@@ -229,6 +229,18 @@ function todoBranchEntry(details: unknown, isError?: boolean) {
 	};
 }
 
+function subagentBranchEntry(details: unknown, isError?: boolean) {
+	return {
+		type: "message",
+		message: {
+			role: "toolResult",
+			toolName: "subagent",
+			...(isError === undefined ? {} : { isError }),
+			details,
+		},
+	};
+}
+
 async function command(h: ReturnType<typeof harness>, args: string, ctx = h.ctx) {
 	await h.commands.get("atelier").handler(args, ctx);
 }
@@ -1900,6 +1912,95 @@ describe("extension registration", () => {
 		} finally {
 			vi.useRealTimers();
 		}
+	});
+
+	it("restores background subagents and applies attention and stopping events", async () => {
+		const h = harness();
+		h.ctx.sessionManager.getBranch.mockReturnValue([
+			subagentBranchEntry({
+				mode: "workflow",
+				asyncId: "restored-run",
+				asyncDir: "/tmp/missing-restored-run",
+			}),
+		]);
+		await start(h);
+		await command(h, "sidebar on");
+
+		let sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).toContain("queued");
+
+		h.pi.events.emit("subagent:control-event", {
+			event: {
+				type: "needs_attention",
+				to: "needs_attention",
+				runId: "restored-run",
+				agent: "worker",
+				ts: 2_000,
+			},
+		});
+		sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).toContain("needs attention");
+
+		h.pi.events.emit("subagent:child-status", {
+			runId: "restored-run",
+			childId: "worker",
+			agent: "worker",
+			status: "stopping",
+			ts: 3_000,
+		});
+		sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).toContain("worker");
+		expect(sidebarText).toContain("stopping");
+
+		h.ctx.sessionManager.getBranch.mockReturnValue([]);
+		await h.handlers.get("session_tree")?.({ type: "session_tree" }, h.ctx);
+		sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).not.toContain("worker");
+		expect(sidebarText).not.toContain("stopping");
+	});
+
+	it("forwards foreground subagent progress updates into the sidebar", async () => {
+		const h = harness();
+		await start(h);
+		await command(h, "sidebar on");
+		await h.handlers.get("tool_execution_start")?.(
+			{
+				type: "tool_execution_start",
+				toolCallId: "subagent-tool",
+				toolName: "subagent",
+				args: { workflowScript: "return runs.run()" },
+			},
+			h.ctx,
+		);
+		await h.handlers.get("tool_execution_update")?.(
+			{
+				type: "tool_execution_update",
+				toolCallId: "subagent-tool",
+				toolName: "subagent",
+				args: {},
+				partialResult: {
+					details: {
+						workflowChildren: {
+							workflowState: "running",
+							children: [
+								{
+									childId: "review",
+									agent: "reviewer",
+									state: "running",
+									activity: { currentTool: "read" },
+								},
+							],
+						},
+					},
+				},
+			},
+			h.ctx,
+		);
+
+		const sidebarText = h.overlays[0]?.component.render(44).join("\n") ?? "";
+		expect(sidebarText).toContain("reviewer");
+		expect(sidebarText).toContain("running");
+		expect(sidebarText).toContain("read");
 	});
 
 	it("forwards run and turn events into sidebar activity without putting tool history in the footer", async () => {

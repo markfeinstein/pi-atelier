@@ -1636,6 +1636,121 @@ describe("sidebar snapshot and layout", () => {
 		expect(rows).toContainEqual(expect.stringMatching(/^✕ scout\s+failed 3s$/));
 	});
 
+	it("renders every subagent lifecycle and attention state", () => {
+		const rows = contentRows(
+			renderSidebarLines(
+				{
+					...snapshot(),
+					subagents: {
+						active: [
+							{
+								id: "queued",
+								source: "async",
+								status: "queued",
+								agent: "queue",
+								agents: ["queue"],
+								startedAt: 1_000,
+							},
+							{
+								id: "pending",
+								source: "async",
+								status: "pending",
+								agent: "plan",
+								agents: ["plan"],
+								startedAt: 1_000,
+							},
+							{
+								id: "stopping",
+								source: "async",
+								status: "stopping",
+								agent: "stopper",
+								agents: ["stopper"],
+								startedAt: 1_000,
+							},
+							{
+								id: "detached",
+								source: "foreground",
+								status: "detached",
+								agent: "remote",
+								agents: ["remote"],
+								startedAt: 1_000,
+							},
+							{
+								id: "attention",
+								source: "async",
+								status: "running",
+								agent: "blocked",
+								agents: ["blocked"],
+								startedAt: 1_000,
+								activityState: "needs_attention",
+								currentTool: "bash",
+							},
+						],
+						recent: [
+							{
+								id: "partial",
+								source: "async",
+								status: "partial",
+								agent: "partial",
+								agents: ["partial"],
+								startedAt: 1_000,
+								endedAt: 2_000,
+								durationMs: 1_000,
+							},
+							{
+								id: "paused",
+								source: "async",
+								status: "paused",
+								agent: "paused",
+								agents: ["paused"],
+								startedAt: 1_000,
+								endedAt: 2_000,
+								durationMs: 1_000,
+							},
+							{
+								id: "stopped",
+								source: "async",
+								status: "stopped",
+								agent: "stopped",
+								agents: ["stopped"],
+								startedAt: 1_000,
+								endedAt: 2_000,
+								durationMs: 1_000,
+							},
+							{
+								id: "rejected",
+								source: "async",
+								status: "rejected",
+								agent: "rejected",
+								agents: ["rejected"],
+								startedAt: 1_000,
+								endedAt: 2_000,
+								durationMs: 1_000,
+								timedOut: true,
+							},
+						],
+					},
+				},
+				DEFAULT_CONFIG,
+				theme,
+				44,
+				80,
+				false,
+				20_000,
+			),
+		);
+
+		expect(rows).toContainEqual(expect.stringMatching(/^◦ queue\s+queued 19s$/));
+		expect(rows).toContainEqual(expect.stringMatching(/^◦ plan\s+pending 19s$/));
+		expect(rows).toContainEqual(expect.stringMatching(/^… stopper\s+stopping 19s$/));
+		expect(rows).toContainEqual(expect.stringMatching(/^↗ remote\s+detached 19s$/));
+		expect(rows).toContain("⎿ needs attention · bash");
+		expect(rows).toContainEqual(expect.stringMatching(/^◐ partial\s+partial 1s$/));
+		expect(rows).toContainEqual(expect.stringMatching(/^Ⅱ paused\s+paused 1s$/));
+		expect(rows).toContainEqual(expect.stringMatching(/^✕ stopped\s+stopped 1s$/));
+		expect(rows).toContainEqual(expect.stringMatching(/^✕ rejected\s+timed out 1s$/));
+	});
+
 	it("folds extra live tools into the current work row during a Turn", () => {
 		const rows = contentRows(
 			renderSidebarLines(

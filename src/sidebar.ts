@@ -868,22 +868,34 @@ const EMPTY_SUBAGENT_ACTIVITY: SubagentActivitySnapshot = Object.freeze({
 
 function subagentStatusRole(status: SubagentActivityItem["status"]): PaletteRole {
 	if (status === "failed" || status === "rejected" || status === "stopped") return "error";
-	if (status === "paused") return "warning";
+	if (status === "partial" || status === "paused" || status === "stopping" || status === "detached")
+		return "warning";
 	if (status === "running" || status === "queued" || status === "pending") return "working";
 	return "ready";
 }
 
+function subagentItemRole(item: SubagentActivityItem): PaletteRole {
+	if (item.timedOut) return "error";
+	if (item.activityState === "needs_attention") return "warning";
+	return subagentStatusRole(item.status);
+}
+
 function subagentStatusSymbol(status: SubagentActivityItem["status"]): string {
 	if (status === "failed" || status === "rejected" || status === "stopped") return "✕";
+	if (status === "partial") return "◐";
 	if (status === "paused") return "Ⅱ";
+	if (status === "stopping") return "…";
+	if (status === "detached") return "↗";
 	if (status === "queued" || status === "pending") return "◦";
 	if (status === "running") return "◆";
 	return "✓";
 }
 
-function subagentStatusLabel(status: SubagentActivityItem["status"]): string {
-	if (status === "complete") return "done";
-	return status;
+function subagentStatusLabel(item: SubagentActivityItem): string {
+	if (item.statusUnavailable) return "status unavailable";
+	if (item.timedOut) return "timed out";
+	if (item.status === "complete") return "done";
+	return item.status;
 }
 
 function subagentName(item: SubagentActivityItem): string {
@@ -905,10 +917,10 @@ function subagentRow(
 	palette: AtelierPalette,
 	now: number,
 ): string {
-	const role = subagentStatusRole(item.status);
+	const role = subagentItemRole(item);
 	const name = palette.paint(item.status === "complete" ? "muted" : "primary", subagentName(item));
 	const left = `${palette.paint(role, subagentStatusSymbol(item.status))} ${name}`;
-	const right = palette.paint(role, `${subagentStatusLabel(item.status)} ${subagentRuntime(item, now)}`);
+	const right = palette.paint(role, `${subagentStatusLabel(item)} ${subagentRuntime(item, now)}`);
 	return spacedRow(left, right, contentWidth);
 }
 
@@ -919,7 +931,16 @@ function subagentDetailRow(
 	now: number,
 ): string | undefined {
 	const currentTool = sanitize(item.currentTool ?? "");
+	const currentPath = sanitize(item.currentPath ?? "");
 	const label = sanitize(item.label ?? "");
+	const attention =
+		item.activityState === "needs_attention"
+			? "needs attention"
+			: item.activityState === "active_long_running"
+				? "long-running"
+				: "";
+	const process = item.processState && item.processState !== "observed" ? `process ${item.processState}` : "";
+	const unavailable = item.statusUnavailable ? "status unavailable" : "";
 	const stats = [
 		item.turnCount !== undefined ? `⟳ ${finiteCount(item.turnCount)}` : "",
 		item.toolCount !== undefined ? `tools ${finiteCount(item.toolCount)}` : "",
@@ -928,7 +949,15 @@ function subagentDetailRow(
 		item.currentToolStartedAt !== undefined
 			? ` ${formatDuration(Math.max(0, now - item.currentToolStartedAt))}`
 			: "";
-	const detail = currentTool ? `${currentTool}${toolRuntime}` : stats.length > 0 ? stats.join(" · ") : label;
+	const detail = attention
+		? [attention, unavailable, currentTool ? `${currentTool}${toolRuntime}` : "", currentPath, process]
+				.filter(Boolean)
+				.join(" · ")
+		: currentTool
+			? [unavailable, currentTool + toolRuntime, currentPath, process].filter(Boolean).join(" · ")
+			: [unavailable, currentPath, process, stats.length > 0 ? stats.join(" · ") : "", label].filter(
+					Boolean,
+				)[0];
 	if (!detail) return undefined;
 	return truncateToWidth(palette.paint("dim", `⎿ ${detail}`), contentWidth, "");
 }
@@ -946,7 +975,7 @@ function subagentSidebarGroups(
 			name: `subagentActive:${item.id}`,
 			panel: "SUBAGENTS",
 			panelId: "subagents",
-			panelRole: subagentStatusRole(item.status),
+			panelRole: subagentItemRole(item),
 			rows: [subagentRow(item, contentWidth, palette, now), ...(detail ? [detail] : [])],
 			required: false,
 			dropRank: 65 + (snapshot.subagents.active.length - index) / 100,
@@ -957,7 +986,7 @@ function subagentSidebarGroups(
 			name: `subagentRecent:${item.id}`,
 			panel: "SUBAGENTS",
 			panelId: "subagents",
-			panelRole: subagentStatusRole(item.status),
+			panelRole: subagentItemRole(item),
 			rows: [subagentRow(item, contentWidth, palette, now)],
 			required: false,
 			dropRank: 18 + (4 - index) / 100,
