@@ -4,11 +4,32 @@ This changelog tracks the divergent `integration` line. Changes may be upstreame
 
 ## Unreleased
 
-- Wait to run Workspace Pulse Git inspections until Pi considers the project trusted.
 - Restore inherited Pi theme colors in Sidebar values when `colorScheme` is set to `inherit`.
 - Restore working-label configuration, persisted session display/sidebar config, and title-cased Usage composition after the helper refactor.
 - Local maintenance: declare the permanent divergent integration-line policy, normal scoped package identity, release flow, contribution base, CI gate, and private `.plans/` handling.
+- Add a global **Sidebar on startup** setting that is saved to user configuration while preserving session-scoped Sidebar on/off controls.
 - Add temporary Sidebar interaction mouse support: `Ctrl+Shift+R` now supports divider dragging, clicking the Tools disclosure row, and session-scoped widget body collapse from panel crown clicks in regular and fullscreen TUI modes while keeping mouse reporting off outside the temporary mode.
+- Harden Atelier lifecycle teardown for session-owned overlays, exception-safe cleanup, stale Sidebar snapshots, candidate startup failures, and deferred Display saves.
+
+
+## 0.10.1 — 2026-09-04
+
+- Import upstream runtime cleanup through 0.10.1 while preserving integration package identity and channel policy.
+- Remove unused internal formatters, configuration helpers, preview hooks, and legacy menu interfaces without changing the active UI or persisted configuration formats.
+- Simplify Sidebar panel identity and share TODO detail extraction across live updates and session reconstruction.
+- Replace redundant tests with active-path coverage, including concrete split-pane renderer installation and restoration.
+
+## 0.10.0 — 2026-08-28
+
+- Keep the Sidebar calm during an active Turn: Activity shows current work instead of a tool log, extra live tools fold into one row, and Todos lists only the in-progress task.
+- Drop the idle full-height dock rule so the split meets the rounded panels cleanly; the warning divider appears only while resizing.
+
+## 0.9.0 — 2026-08-28
+
+- Frame the composer with a rounded box and inner padding while preserving Pi's thinking-level and bash-mode border colors, and dim Status Rail identity separators to emphasize activity.
+- Keep Sidebar content out of fullscreen transcript selection and copy by rendering it as a separate split-layout child; this raises the minimum supported Pi version to 0.84.0.
+- Delay Workspace Pulse Git inspections until Pi trusts the project.
+- Normalize UI-facing Windows paths to forward slashes while preserving valid POSIX backslashes.
 
 ## 0.8.2 — 2026-08-19
 
@@ -18,12 +39,7 @@ This changelog tracks the divergent `integration` line. Changes may be upstreame
 ## 0.8.1 — 2026-08-12
 
 - Preserve fullscreen transcript mouse-wheel scrolling after Sidebar resize and visibility changes by leaving Pi's persistent mouse reporting enabled.
-
-## 0.8.0 — 2026-08-07
-
-- Add a global **Sidebar on startup** setting that is saved to user configuration while preserving session-scoped Sidebar on/off controls.
-- Harden Atelier lifecycle teardown for session-owned overlays, exception-safe cleanup, stale Sidebar snapshots, candidate startup failures, and deferred Display saves.
-- Simplify Sidebar context rendering, contributed-panel validation, and Sidebar undo bookkeeping without changing behavior.
+- Simplify upstream README prose where it does not conflict with integration-line documentation.
 
 ## 0.7.2 — 2026-08-06
 
@@ -130,4 +146,4 @@ This changelog tracks the divergent `integration` line. Changes may be upstreame
 - Add editorial, minimal, and classic presets.
 - Add layered user and trusted-project JSON configuration.
 - Add width, lifecycle, failure, privacy, and package contract tests.
-- Require Pi 0.80.7+ and Node.js 22.19+.
+- Require Pi 0.84.0+ and Node.js 22.19+.

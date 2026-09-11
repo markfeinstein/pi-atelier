@@ -59,7 +59,6 @@ export interface SettingsWorkspaceOptions {
 	getRenderConfig(): AtelierConfig;
 	getPreviewState?(): FooterState;
 	getSidebarPanelLayout?(): readonly SidebarPanelSetting[];
-	getSidebarPreview?(): readonly string[];
 	/** Live overlay viewport height in rows; omitted direct callers keep full rendering. */
 	getViewportHeight?(): number;
 	theme: ThemeLike;
@@ -509,9 +508,7 @@ export function createSettingsWorkspace(options: SettingsWorkspaceOptions): Sett
 				{ line: "" },
 				actionLine("sidebar-default", "Restore default", "D"),
 			];
-			const sidebarPreviewRows =
-				options.getSidebarPreview?.() ??
-				sidebarDraft.filter((entry) => entry.visible).map((entry) => entry.id);
+			const sidebarPreviewRows = sidebarDraft.filter((entry) => entry.visible).map((entry) => entry.id);
 			const previewConfig = { ...options.getRenderConfig(), ...cloneDisplay(display) };
 			const previewState = options.getPreviewState?.() ?? previewWorkingState(previewConfig);
 			const previewLine = renderFooterLine(

@@ -14,7 +14,7 @@ import {
 	truncateToWidth,
 	visibleWidth,
 } from "@earendil-works/pi-tui";
-import { saveUserConfig, saveUserConfigPatch } from "./config.js";
+import { saveUserConfigPatch } from "./config.js";
 import {
 	DISPLAY_SETTINGS_OVERLAY_MARGIN,
 	DISPLAY_SETTINGS_OVERLAY_MAX_HEIGHT,
@@ -34,45 +34,68 @@ import type { AtelierRuntime } from "./state.js";
 import type { AtelierConfig, Ornament, SegmentId, TemplateName } from "./types.js";
 
 export type { OverlayLifetime } from "./overlay-lifecycle.js";
-export type SaveConfig = typeof saveUserConfig;
 export type SaveConfigPatch = typeof saveUserConfigPatch;
 
 export interface DisplaySettingsWorkspaceOptions {
-	/** Request a live footer/sidebar render after workspace changes. */
 	requestAllRenders?: () => void;
-	/** Lifecycle options are intentionally trailing so the legacy callback positions stay unambiguous. */
 	lifetime?: OverlayLifetime;
 }
 
 export interface ControlCenterOptions extends DisplaySettingsWorkspaceOptions {}
-/** Lifecycle options are trailing so legacy action callback positions remain source-compatible. */
 export interface MenuActionsOptions extends DisplaySettingsWorkspaceOptions {}
 
-type RenderRequest = () => void;
-type SavePatchOrDisplayOptions = SaveConfigPatch | DisplaySettingsWorkspaceOptions | RenderRequest;
-type SavePatchOrControlOptions = SaveConfigPatch | ControlCenterOptions | RenderRequest;
+type SavePatchOrDisplayOptions = SaveConfigPatch | DisplaySettingsWorkspaceOptions;
+type SavePatchOrControlOptions = SaveConfigPatch | ControlCenterOptions;
 
 function resolveDisplayOptions(
-	first?: SavePatchOrDisplayOptions,
-	second?: SavePatchOrDisplayOptions,
-	third?: DisplaySettingsWorkspaceOptions,
-): {
-	savePatch: SaveConfigPatch;
-	requestAllRenders: RenderRequest;
-	options: DisplaySettingsWorkspaceOptions;
-} {
+	savePatchOrOptions?: SavePatchOrDisplayOptions,
+	optionsOrSavePatch?: SavePatchOrDisplayOptions,
+): { savePatch: SaveConfigPatch; options: DisplaySettingsWorkspaceOptions } {
 	let savePatch = saveUserConfigPatch;
-	let requestAllRenders: RenderRequest = () => undefined;
 	let options: DisplaySettingsWorkspaceOptions = {};
-	if (typeof first === "function") {
-		if (typeof second === "function" || third !== undefined) requestAllRenders = first as RenderRequest;
-		else savePatch = first as SaveConfigPatch;
-	} else if (first) options = first;
-	if (typeof second === "function") savePatch = second as SaveConfigPatch;
-	else if (second) options = second;
-	if (third) options = third;
+	if (typeof savePatchOrOptions === "function") savePatch = savePatchOrOptions;
+	else if (savePatchOrOptions) options = savePatchOrOptions;
+	if (typeof optionsOrSavePatch === "function") savePatch = optionsOrSavePatch;
+	else if (optionsOrSavePatch) options = optionsOrSavePatch;
+	return { savePatch, options };
+}
+
+function resolveControlOptions(
+	savePatchOrOptions?: SavePatchOrControlOptions,
+	optionsOrSavePatch?: SavePatchOrControlOptions,
+): { savePatch: SaveConfigPatch; options: ControlCenterOptions } {
+	return resolveDisplayOptions(savePatchOrOptions, optionsOrSavePatch);
+}
+
+function looksLikeSavePatch(value: unknown): value is SaveConfigPatch {
+	return typeof value === "function" && value.length >= 2;
+}
+
+function resolveDisplayCall(
+	requestAllRendersOrSavePatch?: (() => void) | SavePatchOrDisplayOptions,
+	savePatchOrOptions?: SaveConfigPatch | DisplaySettingsWorkspaceOptions,
+	maybeOptions?: DisplaySettingsWorkspaceOptions,
+): { requestAllRenders: () => void; savePatch: SaveConfigPatch; options: DisplaySettingsWorkspaceOptions } {
+	let requestAllRenders: () => void = () => undefined;
+	let savePatch = saveUserConfigPatch;
+	let options: DisplaySettingsWorkspaceOptions = {};
+	if (looksLikeSavePatch(requestAllRendersOrSavePatch)) savePatch = requestAllRendersOrSavePatch;
+	else if (typeof requestAllRendersOrSavePatch === "function")
+		requestAllRenders = requestAllRendersOrSavePatch;
+	else if (requestAllRendersOrSavePatch) options = requestAllRendersOrSavePatch;
+	if (typeof savePatchOrOptions === "function") savePatch = savePatchOrOptions;
+	else if (savePatchOrOptions) options = savePatchOrOptions;
+	if (maybeOptions) options = maybeOptions;
 	requestAllRenders = options.requestAllRenders ?? requestAllRenders;
-	return { savePatch, requestAllRenders, options };
+	return { requestAllRenders, savePatch, options };
+}
+
+function resolveControlCall(
+	requestAllRendersOrSavePatch?: (() => void) | SavePatchOrControlOptions,
+	savePatchOrOptions?: SaveConfigPatch | ControlCenterOptions,
+	maybeOptions?: ControlCenterOptions,
+): { requestAllRenders: () => void; savePatch: SaveConfigPatch; options: ControlCenterOptions } {
+	return resolveDisplayCall(requestAllRendersOrSavePatch, savePatchOrOptions, maybeOptions);
 }
 
 function isOverlayLifetimeActive(lifetime: OverlayLifetime | undefined): boolean {
@@ -143,12 +166,11 @@ interface MenuTheme {
 	bold(text: string): string;
 }
 
-export function renderMenuBorder(theme: MenuTheme, width: number): string {
-	return theme.bold(theme.fg("borderAccent", "━".repeat(Math.max(1, width))));
-}
-
 export function renderMenuFrame(theme: MenuTheme, lines: string[], width: number): string[] {
-	if (width <= 1) return [truncateToWidth(renderMenuBorder(theme, 1), Math.max(0, width), "")];
+	if (width <= 1) {
+		const border = theme.bold(theme.fg("borderAccent", "━"));
+		return [truncateToWidth(border, Math.max(0, width), "")];
+	}
 	const innerWidth = width - 2;
 	const border = (text: string) => theme.bold(theme.fg("borderAccent", text));
 	const framed = lines.map((line) => {
@@ -167,7 +189,6 @@ export function createMenuActions(
 		"getConfig" | "setConfig" | "getDisplaySettings" | "setSessionDisplayPatch" | "refreshUsage"
 	>,
 	userConfigPath: string,
-	_save: SaveConfig = saveUserConfig,
 	savePatch: SaveConfigPatch = saveUserConfigPatch,
 	options: MenuActionsOptions = {},
 ) {
@@ -559,14 +580,14 @@ export async function openDisplaySettingsWorkspace(
 	ctx: ExtensionContext,
 	runtime: DisplaySettingsRuntime,
 	userConfigPath: string,
-	savePatchOrOptions?: SavePatchOrDisplayOptions,
-	optionsOrSavePatch?: SavePatchOrDisplayOptions,
-	legacyOptions?: DisplaySettingsWorkspaceOptions,
+	requestAllRendersOrSavePatch: (() => void) | SavePatchOrDisplayOptions = () => undefined,
+	savePatchOrOptions: SaveConfigPatch | DisplaySettingsWorkspaceOptions = saveUserConfigPatch,
+	maybeOptions: DisplaySettingsWorkspaceOptions = {},
 ): Promise<void> {
-	const { savePatch, requestAllRenders, options } = resolveDisplayOptions(
+	const { requestAllRenders, savePatch, options } = resolveDisplayCall(
+		requestAllRendersOrSavePatch,
 		savePatchOrOptions,
-		optionsOrSavePatch,
-		legacyOptions,
+		maybeOptions,
 	);
 	const lifetime = options.lifetime;
 	if (ctx.mode !== "tui") {
@@ -649,14 +670,14 @@ export async function openAtelierControlCenter(
 	runtime: AtelierRuntime,
 	userConfigPath: string,
 	sidebar: SidebarControls,
-	savePatchOrOptions?: SavePatchOrControlOptions,
-	optionsOrSavePatch?: SavePatchOrControlOptions,
-	legacyOptions?: ControlCenterOptions,
+	requestAllRendersOrSavePatch: (() => void) | SavePatchOrControlOptions = () => undefined,
+	savePatchOrOptions: SaveConfigPatch | ControlCenterOptions = saveUserConfigPatch,
+	maybeOptions: ControlCenterOptions = {},
 ): Promise<void> {
-	const { savePatch, requestAllRenders, options } = resolveDisplayOptions(
+	const { requestAllRenders, savePatch, options } = resolveControlCall(
+		requestAllRendersOrSavePatch,
 		savePatchOrOptions,
-		optionsOrSavePatch,
-		legacyOptions,
+		maybeOptions,
 	);
 	const lifetime = options.lifetime;
 	if (ctx.mode !== "tui") {
@@ -669,10 +690,10 @@ export async function openAtelierControlCenter(
 		ctx,
 		runtime,
 		userConfigPath,
-		saveUserConfig,
 		savePatch,
 		lifetime ? { lifetime } : {},
 	);
+
 	for (;;) {
 		if (!isOverlayLifetimeActive(lifetime)) return;
 		const category = await showSelection(
@@ -748,8 +769,9 @@ export async function openAtelierControlCenter(
 							applySavedUserDisplayPatch: (patch) => runtime.applySavedUserDisplayPatch(patch),
 						},
 						userConfigPath,
+						requestAllRenders,
 						savePatch,
-						{ requestAllRenders, ...(lifetime ? { lifetime } : {}) },
+						lifetime ? { lifetime } : {},
 					);
 				else if (choice === "sidebar-startup")
 					await actions.setShowSidebarOnStartup(!runtime.getConfig().showSidebarOnStartup);
@@ -864,17 +886,4 @@ export async function openAtelierControlCenter(
 			}
 		}
 	}
-}
-
-/** @deprecated Use openAtelierControlCenter. */
-export async function openAtelierMenu(
-	pi: ExtensionAPI,
-	ctx: ExtensionContext,
-	runtime: AtelierRuntime,
-	userConfigPath: string,
-	sidebar: SidebarControls,
-	_save: SaveConfig = saveUserConfig,
-	savePatch: SaveConfigPatch = saveUserConfigPatch,
-): Promise<void> {
-	await openAtelierControlCenter(pi, ctx, runtime, userConfigPath, sidebar, savePatch);
 }

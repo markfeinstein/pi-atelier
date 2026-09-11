@@ -77,13 +77,15 @@ export class AtelierRuntime {
 		this.#requestRender = dependencies.requestRender;
 		const inspectWorkspace = async (): Promise<WorkspacePulseInspection> => {
 			if (!this.#canInspectWorkspace()) return { kind: "unavailable" };
+			const unavailableExecResult = { stdout: "", stderr: "", code: 1, killed: true };
 			return dependencies.inspectWorkspace
 				? dependencies.inspectWorkspace()
 				: inspectWorkspacePulse({
-						exec: async (command, args, options) =>
-							this.#canInspectWorkspace()
-								? this.#pi.exec(command, args, options)
-								: { stdout: "", stderr: "", code: 1, killed: true },
+						exec: async (command, args, options) => {
+							if (!this.#canInspectWorkspace()) return unavailableExecResult;
+							const result = await this.#pi.exec(command, args, options);
+							return this.#canInspectWorkspace() ? result : unavailableExecResult;
+						},
 						cwd: this.#ctx.cwd,
 					});
 		};
@@ -270,20 +272,18 @@ export class AtelierRuntime {
 		if (this.#canInspectWorkspace()) await this.#workspacePulseRefresh.flush();
 	}
 
-	async refreshWorkspacePulse(): Promise<void> {
-		await this.flushWorkspacePulseRefresh();
-	}
-
-	async refreshGitState(): Promise<void> {
-		await this.refreshWorkspacePulse();
-	}
-
-	async refreshGitDirty(): Promise<void> {
-		await this.refreshWorkspacePulse();
-	}
-
 	#applyWorkspacePulseInspection(inspection: WorkspacePulseInspection): void {
 		if (this.#disposed) return;
+		if (!this.#canInspectWorkspace()) {
+			this.#lastWorkspaceData = undefined;
+			const { branch: _branch, ...withoutBranch } = this.#state;
+			this.#replaceState({
+				...withoutBranch,
+				dirty: false,
+				workspacePulse: { status: "unavailable" },
+			});
+			return;
+		}
 		if (inspection.kind === "available") {
 			const { kind: _kind, ...data } = inspection;
 			this.#lastWorkspaceData = data;
@@ -320,10 +320,23 @@ export class AtelierRuntime {
 		});
 	}
 
+	async refreshGitState(): Promise<void> {
+		await this.flushWorkspacePulseRefresh();
+	}
+
+	async refreshGitDirty(): Promise<void> {
+		await this.flushWorkspacePulseRefresh();
+	}
+
+	async refreshWorkspacePulse(): Promise<void> {
+		await this.flushWorkspacePulseRefresh();
+	}
+
 	/**
 	 * Stops scheduled work and resets to inert state, so a footer that outlives its
 	 * `setFooter(undefined)` cannot keep reporting the retired session's branch, usage, or activity.
 	 */
+
 	dispose(): void {
 		this.#disposed = true;
 		this.#workspacePulseRefresh.dispose();
