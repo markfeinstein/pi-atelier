@@ -29,7 +29,10 @@ import {
 	createSubagentActivityTracker,
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	SUBAGENT_ASYNC_STARTED_EVENT,
+	SUBAGENT_CHILD_STATUS_EVENT,
+	SUBAGENT_CONTROL_EVENT,
 	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
+	SUBAGENT_PROCESS_TERMINAL_EVENT,
 	type SubagentActivityTracker,
 } from "../src/subagent-activity.js";
 import {
@@ -286,6 +289,17 @@ export default function atelierExtension(
 		return allItems.map(normalizeTodo).filter((item): item is NormalizedTodo => item !== undefined);
 	}
 
+	function restoreSubagentActivity(ctx: ExtensionContext, tracker: SubagentActivityTracker): void {
+		const details: unknown[] = [];
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type !== "message") continue;
+			const message = entry.message;
+			if (message.role !== "toolResult" || message.toolName !== "subagent" || message.isError) continue;
+			details.push(message.details);
+		}
+		tracker.reconcileRestoredAsyncToolResults(details);
+	}
+
 	function getSidebarSnapshot(targetSession: ActiveSession): SidebarSnapshot {
 		if (targetSession.retired || activeSession !== targetSession) {
 			return buildSidebarSnapshot({
@@ -366,6 +380,15 @@ export default function atelierExtension(
 		),
 		pi.events.on(SUBAGENT_FOREGROUND_COMPLETE_EVENT, (data) =>
 			routeSubagentActivityEvent((tracker, event) => tracker.handleForegroundComplete(event), data),
+		),
+		pi.events.on(SUBAGENT_CONTROL_EVENT, (data) =>
+			routeSubagentActivityEvent((tracker, event) => tracker.handleControlEvent(event), data),
+		),
+		pi.events.on(SUBAGENT_CHILD_STATUS_EVENT, (data) =>
+			routeSubagentActivityEvent((tracker, event) => tracker.handleChildStatus(event), data),
+		),
+		pi.events.on(SUBAGENT_PROCESS_TERMINAL_EVENT, (data) =>
+			routeSubagentActivityEvent((tracker, event) => tracker.handleProcessTerminal(event), data),
 		),
 	];
 	void unsubscribeSubagentActivityEvents;
@@ -796,6 +819,7 @@ export default function atelierExtension(
 				...(currentSessionId === undefined ? {} : { currentSessionId }),
 				onChange: requestCandidateRenders,
 			});
+			restoreSubagentActivity(initializationContext, localSubagentActivity);
 			const candidateCompletionNotifier = createCompletionNotifier({
 				isEnabled: () =>
 					enabled &&
@@ -985,6 +1009,7 @@ export default function atelierExtension(
 		const current = getActiveSession(ctx);
 		if (!current) return;
 		current.todos = reconstructTodos(ctx);
+		restoreSubagentActivity(ctx, current.subagentActivity);
 		requestAllRenders(current);
 	});
 
@@ -1019,6 +1044,9 @@ export default function atelierExtension(
 		if (!current) return;
 		current.runActivity.startTool(event);
 		current.subagentActivity.startForegroundTool(event);
+	});
+	pi.on("tool_execution_update", (event, ctx) => {
+		getActiveSession(ctx)?.subagentActivity.updateForegroundTool(event);
 	});
 	pi.on("tool_execution_end", (event, ctx) => {
 		const current = getActiveSession(ctx);
