@@ -6,7 +6,7 @@
 
 Keep model, context, Git status, usage, and tool activity visible while you work in [Pi](https://pi.dev).
 
-Pi Atelier adds a responsive status rail to the composer and a live activity sidebar to your terminal.
+Pi Atelier adds a responsive status rail below the composer by default, an optional composer-embedded rail, and a live activity sidebar to your terminal.
 
 [Quick start](#quick-start) · [Features](#features) · [Use](#use) · [Configuration](#configuration) · [Troubleshooting](#troubleshooting)
 
@@ -113,12 +113,15 @@ Project settings override user settings. Session changes override both. Global f
   "showSidebarOnStartup": true,
   "showSidebarToolNames": false,
   "completionNotifications": true,
+  "statusRailPlacement": "footer",
   "workingLabels": ["THINKING", "WORKING", "PROCESSING"],
   "colorScheme": "atelier"
 }
 ```
 
 Use **Settings → Display** to reorder or hide status rail segments and sidebar panels. Undo restores the latest Display or Sidebar edit, including a Display Revert. Legacy user settings `showSidebarAgent` and `showSidebarTodos` remain supported when `sidebarPanelLayout` is absent.
+
+`statusRailPlacement` controls where the rail appears. The default, `"footer"`, keeps Atelier's rounded editor and renders the complete rail below the composer. Set it to `"composer"` to embed identity and context in the composer's top border and leave measured telemetry below it. Composer mode automatically falls back to the complete footer when the header is unavailable or the terminal is too narrow or short.
 
 `workingLabels` controls the working-state phrase. Omit it for the built-in phrase set, set it to `false` for a static `WORKING` label, or provide a non-empty string array. One phrase is selected per work cycle and remains stable until that cycle ends.
 

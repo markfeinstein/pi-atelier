@@ -23,6 +23,7 @@ import {
 	type PresetName,
 	type SegmentId,
 	type SegmentLayout,
+	type StatusRailPlacement,
 	type TemplateName,
 } from "./types.js";
 import { DEFAULT_SIDEBAR_PANEL_LAYOUT, normalizeSidebarPanelLayout } from "./sidebar-panels.js";
@@ -114,6 +115,7 @@ const presets = new Set<PresetName>(["editorial", "minimal", "classic", "custom"
 const densities = new Set(["comfortable", "compact"]);
 const ornaments = new Set(["none", "restrained"]);
 const colorSchemeBases = new Set<ColorSchemeBase>(["atelier", "inherit"]);
+const statusRailPlacements = new Set<StatusRailPlacement>(["footer", "composer"]);
 const paletteRoles = new Set<string>(PALETTE_ROLES);
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -452,6 +454,12 @@ function applyNonDisplay(
 	if ("colorScheme" in input) {
 		const parsed = parseColorScheme(input.colorScheme, warnings);
 		if (parsed !== undefined) config.colorScheme = layerColorScheme(config.colorScheme, parsed);
+	}
+	if ("statusRailPlacement" in input) {
+		const value = input.statusRailPlacement;
+		if (typeof value === "string" && statusRailPlacements.has(value as StatusRailPlacement))
+			config.statusRailPlacement = value as StatusRailPlacement;
+		else warnings.push("statusRailPlacement must be footer or composer");
 	}
 	if ("workingLabels" in input) {
 		const value = input.workingLabels;

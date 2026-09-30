@@ -15,6 +15,7 @@ import {
 	renderOverlayText,
 	mountComposer,
 	withPersistedUserConfig,
+	loadTestConfig,
 	FOOTER_THEME,
 } from "./helpers/extension.js";
 
@@ -94,31 +95,94 @@ describe("extension registration", () => {
 		expect(h.shortcuts).toContain("ctrl+shift+r");
 	});
 
+	it("defaults to a rounded composer with the complete status rail below it", async () => {
+		const h = harness();
+		await start(h);
+		const { editor, footer } = mountComposer(h);
+		try {
+			expect(editor.render(80)[0]).toMatch(/^╭─+╮$/);
+			expect(editor.render(80)[0]).not.toContain("● READY");
+			const rail = footer.render(80).join("\n");
+			expect(rail).toContain("● READY");
+			expect(rail).toContain("10.0%");
+			expect(rail).not.toContain("project");
+		} finally {
+			footer.dispose();
+		}
+	});
+
+	it("moves a mounted status rail between the footer and composer as runtime config changes", async () => {
+		let placement: "footer" | "composer" = "footer";
+		const h = harness("tui", "linux", false, {
+			loadConfig: async (options) => {
+				const loaded = await loadTestConfig(options);
+				const config = Object.defineProperty({ ...loaded.config }, "statusRailPlacement", {
+					enumerable: true,
+					get: () => placement,
+				});
+				return { ...loaded, config };
+			},
+		});
+		await start(h);
+		const { editor, footer } = mountComposer(h);
+		try {
+			const footerEditor = editor.render(80)[0] ?? "";
+			const footerRail = footer.render(80).join("\n");
+			expect(footerEditor).toMatch(/^╭─+╮$/);
+			expect(footerRail).toContain("● READY");
+			expect(footerRail).toContain("10.0%");
+
+			placement = "composer";
+			const composerHeader = editor.render(80)[0] ?? "";
+			const composerFooter = footer.render(80).join("\n");
+			expect(composerHeader).toContain("● READY");
+			expect(composerHeader).toContain("10.0%");
+			expect(composerFooter).not.toContain("● READY");
+			expect(composerFooter).not.toContain("10.0%");
+
+			placement = "footer";
+			const restoredEditor = editor.render(80)[0] ?? "";
+			const restoredFooter = footer.render(80).join("\n");
+			expect(restoredEditor).toMatch(/^╭─+╮$/);
+			expect(restoredFooter).toContain("● READY");
+			expect(restoredFooter).toContain("10.0%");
+			expect(h.setFooter).toHaveBeenCalledOnce();
+			expect(h.setEditorComponent).toHaveBeenCalledOnce();
+		} finally {
+			footer.dispose();
+		}
+	});
+
 	it.each([
 		{ columns: 80, rows: 6 },
 		{ columns: 18, rows: 24 },
 		{ columns: 20, rows: 24 },
 		{ columns: 22, rows: 24 },
-	])("keeps complete context in the footer at $columns×$rows", async ({ columns, rows }) => {
-		const h = harness();
-		await start(h);
-		const { tui, editor, footer } = mountComposer(h);
-		try {
-			expect(editor.render(80)[0]).toContain("● READY");
-			footer.render(80);
-			Object.assign(tui.terminal, { columns, rows });
-			expect(editor.render(columns)[0]).not.toContain("● READY");
-			const fallback = footer.render(columns).join("\n");
-			expect(fallback).toContain("● READY");
-			expect(fallback).toContain("10.0%");
+	])(
+		"composer placement keeps complete context in the footer at $columns×$rows",
+		async ({ columns, rows }) => {
+			await withPersistedUserConfig({ statusRailPlacement: "composer" }, async () => {
+				const h = harness();
+				await start(h);
+				const { tui, editor, footer } = mountComposer(h);
+				try {
+					expect(editor.render(80)[0]).toContain("● READY");
+					footer.render(80);
+					Object.assign(tui.terminal, { columns, rows });
+					expect(editor.render(columns)[0]).not.toContain("● READY");
+					const fallback = footer.render(columns).join("\n");
+					expect(fallback).toContain("● READY");
+					expect(fallback).toContain("10.0%");
 
-			Object.assign(tui.terminal, { columns: 80, rows: 24 });
-			expect(editor.render(80)[0]).toContain("10.0%");
-			expect(footer.render(80).join("\n")).not.toContain("10.0%");
-		} finally {
-			footer.dispose();
-		}
-	});
+					Object.assign(tui.terminal, { columns: 80, rows: 24 });
+					expect(editor.render(80)[0]).toContain("10.0%");
+					expect(footer.render(80).join("\n")).not.toContain("10.0%");
+				} finally {
+					footer.dispose();
+				}
+			});
+		},
+	);
 
 	it("routes f6 to the Control Center", async () => {
 		const h = harness("tui", "linux", true);

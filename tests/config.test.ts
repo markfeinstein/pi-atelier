@@ -21,6 +21,7 @@ describe("configuration validation", () => {
 		}
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
+		expect(DEFAULT_CONFIG.statusRailPlacement).toBe("footer");
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => entry.id)).toEqual([
 			"agent",
@@ -64,6 +65,16 @@ describe("configuration validation", () => {
 				"Unknown colorScheme role: mystery",
 			]),
 		);
+	});
+
+	it("validates status rail placement without replacing a valid lower value", () => {
+		expect(validateConfig({ statusRailPlacement: "composer" }).config.statusRailPlacement).toBe("composer");
+		const invalid = validateConfig(
+			{ statusRailPlacement: "sidebar" },
+			{ ...DEFAULT_CONFIG, statusRailPlacement: "composer" },
+		);
+		expect(invalid.config.statusRailPlacement).toBe("composer");
+		expect(invalid.warnings).toContain("statusRailPlacement must be footer or composer");
 	});
 
 	it("keeps legacy Sidebar visibility compatible when no authoritative layout is present", () => {
@@ -295,20 +306,26 @@ describe("configuration files", () => {
 		expect(result.config.preset).toBe("custom");
 	});
 
-	it("layers color schemes and working labels across configuration sources", async () => {
+	it("layers color schemes, working labels, and status rail placement across sources", async () => {
 		await writeJson(userPath, {
 			colorScheme: "inherit",
 			workingLabels: ["USER"],
+			statusRailPlacement: "footer",
 		});
 		await writeJson(projectPath, {
 			colorScheme: { output: "#ff00ff", cache: 45 },
 			workingLabels: false,
+			statusRailPlacement: "composer",
 		});
 		const result = await loadConfig({
 			userPath,
 			projectPath,
 			projectTrusted: true,
-			session: { colorScheme: { cache: "syntaxType" }, workingLabels: ["SESSION"] },
+			session: {
+				colorScheme: { cache: "syntaxType" },
+				workingLabels: ["SESSION"],
+				statusRailPlacement: "footer",
+			},
 		});
 		expect(result.config.colorScheme).toEqual({
 			base: "inherit",
@@ -316,6 +333,9 @@ describe("configuration files", () => {
 			cache: "syntaxType",
 		});
 		expect(result.config.workingLabels).toEqual(["SESSION"]);
+		expect(result.config.statusRailPlacement).toBe("footer");
+		const projectOnly = await loadConfig({ userPath, projectPath, projectTrusted: true });
+		expect(projectOnly.config.statusRailPlacement).toBe("composer");
 	});
 
 	it("ignores project and session legacy Sidebar visibility when the user omits it", async () => {
