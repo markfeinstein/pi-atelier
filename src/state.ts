@@ -3,6 +3,13 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { resolveWorkingLabels, selectWorkingLabel } from "./activity.js";
 import { resolveDisplayLayers } from "./config.js";
 import { aggregateMetrics, type UsageMessage } from "./metrics.js";
+import {
+	emptySubagentUsage,
+	isSubagentUsageEventForSession,
+	readSubagentUsage,
+	subagentMetadataReferences,
+	SUBAGENT_METADATA_ENTRY,
+} from "./subagent-usage.js";
 import type {
 	ActivityState,
 	AtelierConfig,
@@ -20,6 +27,7 @@ import {
 	type WorkspacePulseInspection,
 	type WorkspacePulseRefresh,
 } from "./workspace-pulse.js";
+
 const SESSION_DISPLAY_OVERRIDE_KEYS = [
 	"preset",
 	"density",
@@ -36,9 +44,10 @@ export interface RuntimeDependencies {
 	displayLayers?: DisplayLayerState;
 	displayProvenance?: DisplayProvenance;
 	autoCompact: boolean | null;
+	enabled?: boolean;
 	random?: () => number;
 	requestRender(): void;
-	inspectWorkspace?(): Promise<WorkspacePulseInspection>;
+	inspectWorkspace?(signal: AbortSignal): Promise<WorkspacePulseInspection>;
 }
 
 export function createInertAtelierState(autoCompact: boolean | null = null): AtelierState {
@@ -62,8 +71,15 @@ export class AtelierRuntime {
 	#displayLayers: DisplayLayerState;
 	#displayProvenance: DisplayProvenance;
 	#disposed = false;
+	#enabled: boolean;
 	#lastWorkspaceData: WorkspacePulseData | undefined;
 	#state: AtelierState;
+	#subagentRefresh: Promise<void> | undefined;
+	#subagentRefreshTimer: ReturnType<typeof setTimeout> | undefined;
+	#subagentDirty = false;
+	#subagentEntries: readonly unknown[] = [];
+	#subagentAbort = new AbortController();
+	#subagentUnsubscribe: (() => void) | undefined;
 
 	constructor(dependencies: RuntimeDependencies) {
 		this.#pi = dependencies.pi;
@@ -73,43 +89,116 @@ export class AtelierRuntime {
 		this.#displayProvenance =
 			dependencies.displayProvenance ?? resolveDisplayLayers(this.#displayLayers).provenance;
 		this.#autoCompact = dependencies.autoCompact;
+		this.#enabled = dependencies.enabled ?? true;
 		this.#random = dependencies.random ?? Math.random;
 		this.#requestRender = dependencies.requestRender;
-		const inspectWorkspace = async (): Promise<WorkspacePulseInspection> => {
+		const inspectWorkspace = async (signal: AbortSignal): Promise<WorkspacePulseInspection> => {
 			if (!this.#canInspectWorkspace()) return { kind: "unavailable" };
-			const unavailableExecResult = { stdout: "", stderr: "", code: 1, killed: true };
 			return dependencies.inspectWorkspace
-				? dependencies.inspectWorkspace()
+				? dependencies.inspectWorkspace(signal)
 				: inspectWorkspacePulse({
-						exec: async (command, args, options) => {
-							if (!this.#canInspectWorkspace()) return unavailableExecResult;
-							const result = await this.#pi.exec(command, args, options);
-							return this.#canInspectWorkspace() ? result : unavailableExecResult;
-						},
+						exec: async (command, args, options) =>
+							this.#canInspectWorkspace()
+								? this.#pi.exec(command, args, options)
+								: { stdout: "", stderr: "", code: 1, killed: true },
 						cwd: this.#ctx.cwd,
+						signal,
 					});
 		};
 		this.#workspacePulseRefresh = createWorkspacePulseRefresh({
 			inspect: inspectWorkspace,
 			publish: (inspection) => this.#applyWorkspacePulseInspection(inspection),
 		});
-		this.#state = this.#inertState(this.#ctx.getContextUsage());
+		this.#workspacePulseRefresh.setEnabled(this.#enabled);
+		this.#state = this.#inertState();
 		if (!this.#ctx.isProjectTrusted()) {
 			this.#state = { ...this.#state, workspacePulse: { status: "unavailable" } };
 		}
 		this.refreshUsage();
+		const unsubscribe = ["subagent:async-complete", "subagent:async-started", "subagent:child-status"].map(
+			(channel) =>
+				this.#pi.events?.on(channel, (data: unknown) => {
+					if (!this.#canInspectWorkspace()) return;
+					if (
+						!isSubagentUsageEventForSession(
+							data,
+							this.#ctx.sessionManager.getEntries(),
+							this.#subagentSessionIdentity(),
+						)
+					)
+						return;
+					if ((data as { sessionId?: unknown }).sessionId === undefined) this.#scheduleSubagentRefresh();
+					else this.observeSubagentMetadata(data);
+				}),
+		);
+		this.#subagentUnsubscribe = () => {
+			for (const off of unsubscribe) off?.();
+		};
 	}
 
-	/** State with no branch, workspace data, or usage history; context is included only when explicit. */
-	#inertState(context: ReturnType<ExtensionContext["getContextUsage"]> = undefined): AtelierState {
+	/** Save only pointers; totals and curves are read from the producer's own accounting records. */
+	observeSubagentMetadata(data: unknown): void {
+		if (!this.#canInspectWorkspace()) return;
+		const refs = subagentMetadataReferences(data);
+		if (!refs.runIds.length) return;
+		const entries = this.#ctx.sessionManager.getEntries();
+		const serialized = JSON.stringify(refs);
+		if (
+			!entries.some(
+				(entry) =>
+					entry.type === "custom" &&
+					entry.customType === SUBAGENT_METADATA_ENTRY &&
+					JSON.stringify(entry.data) === serialized,
+			)
+		) {
+			try {
+				this.#pi.appendEntry(SUBAGENT_METADATA_ENTRY, refs);
+			} catch {
+				return;
+			}
+		}
+		this.#scheduleSubagentRefresh();
+	}
+
+	#scheduleSubagentRefresh(delay = 100): void {
+		if (!this.#subagentRefreshTimer) {
+			this.#subagentRefreshTimer = setTimeout(() => {
+				this.#subagentRefreshTimer = undefined;
+				void this.refreshSubagentUsage();
+			}, delay);
+			this.#subagentRefreshTimer.unref();
+		}
+	}
+
+	/** Suspend producers without losing the session's small activity/configuration state. */
+	setEnabled(enabled: boolean): void {
+		if (this.#disposed || this.#enabled === enabled) return;
+		this.#enabled = enabled;
+		this.#workspacePulseRefresh.setEnabled(enabled);
+		if (!enabled) {
+			this.#subagentAbort.abort();
+			clearTimeout(this.#subagentRefreshTimer);
+			this.#subagentRefreshTimer = undefined;
+			return;
+		}
+		this.#subagentAbort = new AbortController();
+		this.#state = {
+			...this.#state,
+			workspacePulse: !this.#ctx.isProjectTrusted()
+				? { status: "unavailable" }
+				: this.#lastWorkspaceData
+					? { status: "stale", data: this.#lastWorkspaceData }
+					: { status: "inspecting" },
+		};
+		this.refreshUsage();
+		void this.flushWorkspacePulseRefresh();
+	}
+
+	/** State with no branch, workspace data, context, or usage history. */
+	#inertState(): AtelierState {
 		return {
 			...createInertAtelierState(this.#autoCompact),
 			workspacePulse: { status: "inspecting" },
-			metrics: aggregateMetrics([], {
-				subscription: false,
-				autoCompact: this.#autoCompact,
-				...(context ? { context } : {}),
-			}),
 		};
 	}
 
@@ -167,46 +256,29 @@ export class AtelierRuntime {
 		this.replaceSessionDisplayOverride(undefined);
 	}
 
-	setSessionDisplayPatch(patch: DisplayPatch | undefined): void {
-		if (!patch) {
-			this.clearSessionDisplayOverride();
-			return;
-		}
-		this.replaceSessionDisplayOverride({ ...this.getSessionDisplayOverride(), ...structuredClone(patch) });
-	}
-
 	/** Applies a successfully persisted User patch, then safely drops redundant Session fields. */
-	applySavedUserDisplayPatch(patch: DisplayPatch, canonicalizeSession = true): void {
+	applySavedUserDisplayPatch(patch: DisplayPatch): void {
 		this.#displayLayers = {
 			...this.#displayLayers,
 			user: { ...this.#displayLayers.user, ...structuredClone(patch) },
 		};
 		if (patch.sidebarPanelLayout) {
 			const sidebarPanelLayout = patch.sidebarPanelLayout.map((entry) => ({ ...entry }));
-			this.#config = {
-				...this.#config,
-				sidebarPanelLayout,
-				showSidebarAgent:
-					sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible ?? this.#config.showSidebarAgent,
-				showSidebarTodos:
-					sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible ?? this.#config.showSidebarTodos,
-			};
+			this.#config = { ...this.#config, sidebarPanelLayout };
 		}
-		if (canonicalizeSession) {
-			const target = resolveDisplayLayers(this.#displayLayers).display;
-			let session = { ...this.#displayLayers.session };
-			for (const key of ["preset", "density", "segmentLayout"] as const) {
-				if (!(key in session)) continue;
-				const candidate = { ...session };
-				delete candidate[key];
-				const { session: _oldSession, ...lower } = this.#displayLayers;
-				const layers: DisplayLayerState =
-					Object.keys(candidate).length > 0 ? { ...lower, session: candidate } : lower;
-				if (isDeepStrictEqual(resolveDisplayLayers(layers).display, target)) session = candidate;
-			}
+		const target = resolveDisplayLayers(this.#displayLayers).display;
+		let session = { ...this.#displayLayers.session };
+		for (const key of ["preset", "density", "segmentLayout"] as const) {
+			if (!(key in session)) continue;
+			const candidate = { ...session };
+			delete candidate[key];
 			const { session: _oldSession, ...lower } = this.#displayLayers;
-			this.#displayLayers = Object.keys(session).length > 0 ? { ...lower, session } : lower;
+			const layers: DisplayLayerState =
+				Object.keys(candidate).length > 0 ? { ...lower, session: candidate } : lower;
+			if (isDeepStrictEqual(resolveDisplayLayers(layers).display, target)) session = candidate;
 		}
+		const { session: _oldSession, ...lower } = this.#displayLayers;
+		this.#displayLayers = Object.keys(session).length > 0 ? { ...lower, session } : lower;
 		this.#resolveDisplay();
 	}
 
@@ -236,9 +308,10 @@ export class AtelierRuntime {
 	}
 
 	refreshUsage(): void {
-		if (this.#disposed) return;
+		if (this.#disposed || !this.#enabled) return;
 		const messages: UsageMessage[] = [];
-		for (const entry of this.#ctx.sessionManager.getEntries()) {
+		const entries = this.#ctx.sessionManager.getEntries();
+		for (const entry of entries) {
 			if (entry.type === "message" && entry.message.role === "assistant") {
 				messages.push(entry.message as UsageMessage);
 			}
@@ -258,10 +331,55 @@ export class AtelierRuntime {
 			}),
 		};
 		this.#invalidate();
+		void this.refreshSubagentUsage(entries);
+	}
+
+	#subagentSessionIdentity(): { sessionFile?: string; sessionId?: string } {
+		const sessionFile = this.#ctx.sessionManager.getSessionFile?.();
+		const sessionId = this.#ctx.sessionManager.getSessionId?.();
+		return { ...(sessionFile ? { sessionFile } : {}), ...(sessionId ? { sessionId } : {}) };
+	}
+
+	/** Serialized accounting reads; active background work refreshes until it settles. */
+	async refreshSubagentUsage(entries?: readonly unknown[]): Promise<void> {
+		if (!this.#canInspectWorkspace()) return;
+		clearTimeout(this.#subagentRefreshTimer);
+		this.#subagentRefreshTimer = undefined;
+		this.#subagentEntries = entries ?? this.#ctx.sessionManager.getEntries();
+		this.#subagentDirty = true;
+		if (this.#subagentRefresh) return this.#subagentRefresh;
+		this.#subagentRefresh = (async () => {
+			while (this.#subagentDirty && this.#canInspectWorkspace()) {
+				this.#subagentDirty = false;
+				const signal = this.#subagentAbort.signal;
+				const session = this.#subagentSessionIdentity();
+				try {
+					const subagentUsage = await readSubagentUsage({
+						entries: this.#subagentEntries,
+						cwd: this.#ctx.cwd,
+						...session,
+						signal,
+					});
+					if (!signal.aborted && this.#canInspectWorkspace())
+						this.#replaceState({ ...this.#state, subagentUsage });
+				} catch {
+					if (!signal.aborted && this.#canInspectWorkspace())
+						this.#replaceState({
+							...this.#state,
+							subagentUsage: { ...emptySubagentUsage(), unavailable: 1 },
+						});
+				}
+			}
+		})().finally(() => {
+			this.#subagentRefresh = undefined;
+			if (this.#canInspectWorkspace() && this.#state.subagentUsage?.pending)
+				this.#scheduleSubagentRefresh(1500);
+		});
+		return this.#subagentRefresh;
 	}
 
 	#canInspectWorkspace(): boolean {
-		return !this.#disposed && this.#ctx.isProjectTrusted();
+		return !this.#disposed && this.#enabled && this.#ctx.isProjectTrusted();
 	}
 
 	scheduleWorkspacePulseRefresh(): void {
@@ -273,17 +391,7 @@ export class AtelierRuntime {
 	}
 
 	#applyWorkspacePulseInspection(inspection: WorkspacePulseInspection): void {
-		if (this.#disposed) return;
-		if (!this.#canInspectWorkspace()) {
-			this.#lastWorkspaceData = undefined;
-			const { branch: _branch, ...withoutBranch } = this.#state;
-			this.#replaceState({
-				...withoutBranch,
-				dirty: false,
-				workspacePulse: { status: "unavailable" },
-			});
-			return;
-		}
+		if (this.#disposed || !this.#enabled) return;
 		if (inspection.kind === "available") {
 			const { kind: _kind, ...data } = inspection;
 			this.#lastWorkspaceData = data;
@@ -320,25 +428,16 @@ export class AtelierRuntime {
 		});
 	}
 
-	async refreshGitState(): Promise<void> {
-		await this.flushWorkspacePulseRefresh();
-	}
-
-	async refreshGitDirty(): Promise<void> {
-		await this.flushWorkspacePulseRefresh();
-	}
-
-	async refreshWorkspacePulse(): Promise<void> {
-		await this.flushWorkspacePulseRefresh();
-	}
-
 	/**
 	 * Stops scheduled work and resets to inert state, so a footer that outlives its
 	 * `setFooter(undefined)` cannot keep reporting the retired session's branch, usage, or activity.
 	 */
-
 	dispose(): void {
 		this.#disposed = true;
+		this.#subagentAbort.abort();
+		clearTimeout(this.#subagentRefreshTimer);
+		this.#subagentRefreshTimer = undefined;
+		this.#subagentUnsubscribe?.();
 		this.#workspacePulseRefresh.dispose();
 		this.#lastWorkspaceData = undefined;
 		this.#state = { ...this.#inertState(), workspacePulse: { status: "unavailable" } };
@@ -351,6 +450,6 @@ export class AtelierRuntime {
 	}
 
 	#invalidate(): void {
-		if (!this.#disposed) this.#requestRender();
+		if (!this.#disposed && this.#enabled) this.#requestRender();
 	}
 }

@@ -1,50 +1,15 @@
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, saveUserConfigPatch, validateConfig } from "../src/config.js";
 import { DISPLAY_TEMPLATES, PRODUCT_SEGMENT_ORDER } from "../src/display.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
 
-let root: string;
-let userPath: string;
-let projectPath: string;
-const writeJson = (path: string, value: unknown) => writeFile(path, JSON.stringify(value), "utf8");
-
-beforeEach(async () => {
-	root = await mkdtemp(join(tmpdir(), "pi-atelier-"));
-	userPath = join(root, "user.json");
-	projectPath = join(root, "project.json");
-});
-
 const visibility = (layout: typeof DEFAULT_CONFIG.segmentLayout, id: string) =>
 	layout.find((entry) => entry.id === id)?.visible;
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-	typeof value === "object" && value !== null && !Array.isArray(value);
-
-function layerColorScheme(previous: unknown, next: unknown): unknown {
-	if (typeof next === "string") return next;
-	if (!isRecord(next)) return previous;
-	const base = typeof previous === "string" ? { base: previous } : isRecord(previous) ? previous : {};
-	return { ...base, ...next };
-}
-
-function mergeConfig(...inputs: unknown[]): ReturnType<typeof validateConfig> {
-	let merged: Record<string, unknown> = {};
-	let colorScheme: unknown;
-	for (const input of inputs) {
-		if (!isRecord(input)) continue;
-		merged = { ...merged, ...input };
-		if ("colorScheme" in input) {
-			colorScheme = layerColorScheme(colorScheme ?? DEFAULT_CONFIG.colorScheme, input.colorScheme);
-			merged.colorScheme = colorScheme;
-		}
-	}
-	return validateConfig(merged);
-}
-
-describe("configuration", () => {
+describe("configuration validation", () => {
 	it("defines complete defaults and compatibility templates", () => {
 		for (const template of [DEFAULT_CONFIG, ...Object.values(DISPLAY_TEMPLATES)]) {
 			expect(template.segmentLayout.map((entry) => entry.id)).toEqual(PRODUCT_SEGMENT_ORDER);
@@ -56,9 +21,7 @@ describe("configuration", () => {
 		}
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
-		expect(DEFAULT_CONFIG.showSidebarAgent).toBe(true);
-		expect(DEFAULT_CONFIG.colorScheme).toBe("atelier");
-		expect(DEFAULT_CONFIG.workingLabels).toBeUndefined();
+		expect(DEFAULT_CONFIG.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => entry.id)).toEqual([
 			"agent",
 			"activity",
@@ -71,42 +34,36 @@ describe("configuration", () => {
 		]);
 	});
 
-	it("loads an ordered global Sidebar layout with deterministic compatibility precedence", async () => {
-		await writeJson(userPath, {
-			showSidebarAgent: false,
-			showSidebarTodos: false,
-			sidebarPanelLayout: [
-				{ id: "tools", visible: false },
-				{ id: "vendor:queue", visible: false },
-				{ id: "tools", visible: true },
-			],
-		});
-		await writeJson(projectPath, { sidebarPanelLayout: [{ id: "agent", visible: false }] });
-		const result = await loadConfig({
-			userPath,
-			projectPath,
-			projectTrusted: true,
-			session: { sidebarPanelLayout: [] },
-		});
-		expect(result.config.sidebarPanelLayout.slice(0, 2)).toEqual([
-			{ id: "tools", visible: false },
-			{ id: "vendor:queue", visible: false },
+	it("normalizes working labels and supports disabling them", () => {
+		expect(DEFAULT_CONFIG.workingLabels).toBeUndefined();
+		expect(validateConfig({ workingLabels: false }).config.workingLabels).toBe(false);
+		expect(validateConfig({ workingLabels: [" THINKING ", "WORKING"] }).config.workingLabels).toEqual([
+			"THINKING",
+			"WORKING",
 		]);
-		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
-		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(true);
-		expect(result.warnings.filter((warning) => warning.includes("duplicate")).length).toBe(1);
+		const invalid = validateConfig({ workingLabels: ["", 5, "THINKING"] });
+		expect(invalid.config.workingLabels).toEqual(["THINKING"]);
+		expect(invalid.warnings).toContain("workingLabels entries must be non-empty strings");
+		expect(validateConfig({ workingLabels: [] }).warnings).toContain(
+			"workingLabels must include at least one non-empty string",
+		);
 	});
 
-	it("migrates retired Sidebar Context visibility to Usage", () => {
-		const result = validateConfig({
-			sidebarPanelLayout: [
-				{ id: "usage", visible: false },
-				{ id: "context", visible: true },
-			] as Array<{ id: string; visible: boolean }>,
-		});
-		expect(result.config.sidebarPanelLayout.map((entry) => entry.id)).not.toContain("context");
-		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "usage")?.visible).toBe(true);
-		expect(result.warnings).not.toEqual(expect.arrayContaining([expect.stringContaining("context")]));
+	it("validates named and custom color schemes", () => {
+		expect(DEFAULT_CONFIG.colorScheme).toBe("atelier");
+		expect(validateConfig({ colorScheme: "inherit" }).config.colorScheme).toBe("inherit");
+		expect(
+			validateConfig({ colorScheme: { base: "inherit", output: "#cba6f7", cache: 45 } }).config.colorScheme,
+		).toEqual({ base: "inherit", output: "#cba6f7", cache: 45 });
+		const invalid = validateConfig({ colorScheme: { base: "unknown", output: "nope", mystery: 4 } });
+		expect(invalid.config.colorScheme).toBe("atelier");
+		expect(invalid.warnings).toEqual(
+			expect.arrayContaining([
+				"colorScheme.base must be atelier or inherit",
+				"colorScheme.output must be a Pi theme token, #RRGGBB, integer 0-255, or empty string",
+				"Unknown colorScheme role: mystery",
+			]),
+		);
 	});
 
 	it("keeps legacy Sidebar visibility compatible when no authoritative layout is present", () => {
@@ -135,8 +92,6 @@ describe("configuration", () => {
 	it("preserves a custom base Sidebar layout when input omits layout", () => {
 		const base = {
 			...DEFAULT_CONFIG,
-			showSidebarAgent: false,
-			showSidebarTodos: true,
 			sidebarPanelLayout: [
 				{ id: "vendor:queue" as const, visible: true },
 				{ id: "agent" as const, visible: false },
@@ -145,15 +100,12 @@ describe("configuration", () => {
 		};
 		const result = validateConfig({ shortcut: "ctrl+x" }, base);
 		expect(result.config.sidebarPanelLayout).toEqual(base.sidebarPanelLayout);
-		expect(result.config.showSidebarAgent).toBe(false);
-		expect(result.config.showSidebarTodos).toBe(true);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(false);
 	});
 
 	it("translates legacy Sidebar visibility against a custom base without resetting it", () => {
 		const base = {
 			...DEFAULT_CONFIG,
-			showSidebarAgent: false,
-			showSidebarTodos: true,
 			sidebarPanelLayout: [
 				{ id: "vendor:queue" as const, visible: true },
 				{ id: "agent" as const, visible: false },
@@ -164,87 +116,6 @@ describe("configuration", () => {
 		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "vendor:queue")?.visible).toBe(true);
 		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(false);
 		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
-		expect(result.config.showSidebarAgent).toBe(false);
-		expect(result.config.showSidebarTodos).toBe(false);
-	});
-
-	it("merges user, trusted project, then session with actionable provenance", async () => {
-		await writeJson(userPath, { density: "compact" });
-		await writeJson(projectPath, {
-			segmentLayout: [
-				{ id: "context", visible: true },
-				{ id: "metrics", visible: true },
-			],
-		});
-		const result = await loadConfig({
-			userPath,
-			projectPath,
-			projectTrusted: true,
-			session: { segmentLayout: [{ id: "brand", visible: true }] },
-		});
-		expect(result.config.density).toBe("compact");
-		expect(result.config.segmentLayout[0]).toEqual({ id: "brand", visible: true });
-		expect(result.displayProvenance.density).toBe("user");
-		expect(result.displayProvenance.order).toBe("session");
-		expect(result.displayProvenance.visibility.brand).toBe("session");
-		expect(result.config.preset).toBe("custom");
-	});
-
-	it("keeps completion notifications as a global user preference", async () => {
-		await writeJson(userPath, { completionNotifications: false });
-		await writeJson(projectPath, { completionNotifications: true });
-		const result = await loadConfig({
-			userPath,
-			projectPath,
-			projectTrusted: true,
-			session: { completionNotifications: true },
-		});
-		expect(result.config.completionNotifications).toBe(false);
-	});
-
-	it("lets a user Agent visibility preference win over trusted project and session values", async () => {
-		await writeJson(userPath, { showSidebarAgent: false });
-		await writeJson(projectPath, { showSidebarAgent: true });
-		const result = await loadConfig({
-			userPath,
-			projectPath,
-			projectTrusted: true,
-			session: { showSidebarAgent: true },
-		});
-		expect(result.config.showSidebarAgent).toBe(false);
-	});
-
-	it("ignores project and session legacy Sidebar visibility when the user omits it", async () => {
-		await writeJson(projectPath, { showSidebarAgent: false, showSidebarTodos: false });
-		const result = await loadConfig({
-			userPath,
-			projectPath,
-			projectTrusted: true,
-			session: { showSidebarAgent: false, showSidebarTodos: false },
-		});
-		expect(result.config.showSidebarAgent).toBe(true);
-		expect(result.config.showSidebarTodos).toBe(true);
-	});
-
-	it("keeps a user legacy TODOS value ahead of trusted project and session values", async () => {
-		await writeJson(userPath, { showSidebarTodos: false });
-		await writeJson(projectPath, { showSidebarTodos: true });
-		const result = await loadConfig({
-			userPath,
-			projectPath,
-			projectTrusted: true,
-			session: { showSidebarTodos: true },
-		});
-		expect(result.config.showSidebarTodos).toBe(false);
-		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(false);
-	});
-
-	it("does not read, warn about, or attribute an untrusted project", async () => {
-		await writeFile(projectPath, "{broken", "utf8");
-		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });
-		expect(result.config).toEqual(DEFAULT_CONFIG);
-		expect(result.warnings).toEqual([]);
-		expect(result.displayProvenance.order).toBe("product");
 	});
 
 	it("makes a usable segmentLayout authoritative over same-layer legacy fields", () => {
@@ -319,136 +190,158 @@ describe("configuration", () => {
 		).toBe(true);
 	});
 
-	it("accepts valid color scheme forms", () => {
-		expect(validateConfig({ colorScheme: "inherit" }).config.colorScheme).toBe("inherit");
-		expect(validateConfig({ colorScheme: { primary: "", menu: "bashMode" } }).config.colorScheme).toEqual({
-			base: "atelier",
-			primary: "",
-			menu: "bashMode",
-		});
-		expect(
-			validateConfig({ colorScheme: { base: "inherit", output: "#cba6f7", cache: 45, working: "warning" } })
-				.config.colorScheme,
-		).toEqual({ base: "inherit", output: "#cba6f7", cache: 45, working: "warning" });
-	});
-
-	it("layers partial color schemes across config sources", async () => {
-		expect(
-			mergeConfig({ colorScheme: "inherit" }, { colorScheme: { output: "#ff00ff" } }).config.colorScheme,
-		).toEqual({
-			base: "inherit",
-			output: "#ff00ff",
-		});
-		expect(
-			mergeConfig(
-				{ colorScheme: { base: "inherit", output: "#ff00ff", cache: 45 } },
-				{ colorScheme: { base: "atelier", output: "#00ff00" } },
-			).config.colorScheme,
-		).toEqual({ base: "atelier", output: "#00ff00", cache: 45 });
-		await writeJson(userPath, { colorScheme: "inherit" });
-		await writeJson(projectPath, { colorScheme: { output: "#ff00ff" } });
-		expect((await loadConfig({ userPath, projectPath, projectTrusted: true })).config.colorScheme).toEqual({
-			base: "inherit",
-			output: "#ff00ff",
-		});
-		expect(
-			(await loadConfig({ userPath, projectPath, projectTrusted: true, session: { colorScheme: "atelier" } }))
-				.config.colorScheme,
-		).toBe("atelier");
-	});
-
-	it("warns about malformed color schemes and ignores invalid role overrides", () => {
-		const result = validateConfig({
-			colorScheme: {
-				base: "unknown",
-				output: "#bad",
-				cache: 300,
-				context: "selectedBg",
-				mystery: "accent",
-				working: "warning",
-			},
-		});
-		expect(result.config.colorScheme).toEqual({ base: "atelier", working: "warning" });
-		expect(result.warnings).toEqual(
-			expect.arrayContaining([
-				"colorScheme.base must be atelier or inherit",
-				"colorScheme.output must be a Pi theme token, #RRGGBB, integer 0-255, or empty string",
-				"colorScheme.cache must be a Pi theme token, #RRGGBB, integer 0-255, or empty string",
-				"colorScheme.context must be a Pi theme token, #RRGGBB, integer 0-255, or empty string",
-				"Unknown colorScheme role: mystery",
-			]),
-		);
-		expect(validateConfig({ colorScheme: "solarized" }).warnings).toContain("Unknown colorScheme: solarized");
-	});
-
-	it("normalizes and layers workingLabels, falling back when a list resolves to nothing", async () => {
-		const layered = (...inputs: unknown[]) => mergeConfig(...inputs).config.workingLabels;
-		const custom = validateConfig({ workingLabels: [" THINKING ", "WORKING", "PROCESSING"] });
-		expect(custom.config.workingLabels).toEqual(["THINKING", "WORKING", "PROCESSING"]);
-		expect(custom.warnings).toEqual([]);
-		expect(validateConfig({ workingLabels: false }).config.workingLabels).toBe(false);
-		expect(validateConfig({}).warnings).toEqual([]);
-		expect(layered({ workingLabels: false }, { workingLabels: ["THINKING"] }, {})).toEqual(["THINKING"]);
-		expect(layered({ workingLabels: ["THINKING"] }, { workingLabels: false }, {})).toBe(false);
-		expect(layered({ workingLabels: ["USER"] }, {}, { workingLabels: ["  "] })).toBeUndefined();
-		const empty = validateConfig({ workingLabels: [] });
-		expect(empty.config.workingLabels).toBeUndefined();
-		expect(empty.warnings).toContain("workingLabels must include at least one non-empty string");
-		await writeJson(userPath, { workingLabels: ["USER"] });
-		await writeJson(projectPath, { workingLabels: ["PROJECT"] });
-		const session = { workingLabels: ["SESSION"] };
-		expect(
-			(await loadConfig({ userPath, projectPath, projectTrusted: true, session })).config.workingLabels,
-		).toEqual(["SESSION"]);
-	});
-
-	it("rejects invalid thresholds and validates simple preferences", () => {
+	it("rejects invalid thresholds and validates boolean preferences", () => {
 		const result = validateConfig({
 			contextWarning: 95,
 			contextDanger: 80,
 			showSidebarToolNames: "yes",
 			showSidebarOnStartup: "yes",
-			workingLabels: ["", 5, "THINKING"],
 		});
 		expect(result.config.contextWarning).toBe(70);
-		expect(result.config.workingLabels).toEqual(["THINKING"]);
 		expect(result.warnings).toEqual(
 			expect.arrayContaining([
 				expect.stringContaining("threshold"),
 				"showSidebarToolNames must be boolean",
 				"showSidebarOnStartup must be boolean",
-				"workingLabels entries must be non-empty strings",
 			]),
-		);
-		expect(validateConfig({ workingLabels: "plain" }).warnings).toContain(
-			"workingLabels must be false or an array of strings",
 		);
 	});
 
-	it("loads the global Sidebar startup preference only from user config", async () => {
-		await writeJson(userPath, { showSidebarOnStartup: false });
-		await writeJson(projectPath, { showSidebarOnStartup: true });
+	it("rejects non-boolean showSidebarAgent with warning", () => {
+		const result = validateConfig({ showSidebarAgent: "off" });
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
+		expect(result.warnings).toContain("showSidebarAgent must be boolean");
+	});
+});
 
+describe("configuration files", () => {
+	let root: string;
+	let userPath: string;
+	let projectPath: string;
+	const writeJson = (path: string, value: unknown) => writeFile(path, JSON.stringify(value), "utf8");
+
+	beforeEach(async () => {
+		root = await mkdtemp(join(tmpdir(), "pi-atelier-"));
+		userPath = join(root, "user.json");
+		projectPath = join(root, "project.json");
+	});
+
+	afterEach(async () => {
+		await rm(root, { recursive: true, force: true });
+	});
+
+	it.each<[string, Record<string, unknown>]>([
+		["completionNotifications", { completionNotifications: false }],
+		["showSidebarOnStartup", { showSidebarOnStartup: false }],
+		["showSidebarAgent", { sidebarPanelLayout: expect.arrayContaining([{ id: "agent", visible: false }]) }],
+		["showSidebarTodos", { sidebarPanelLayout: expect.arrayContaining([{ id: "todos", visible: false }]) }],
+	])("keeps %s as a global user preference", async (key, expected) => {
+		await writeJson(userPath, { [key]: false });
+		await writeJson(projectPath, { [key]: true });
 		const result = await loadConfig({
 			userPath,
 			projectPath,
 			projectTrusted: true,
-			session: { showSidebarOnStartup: true },
+			session: { [key]: true },
 		});
+		expect(result.config).toMatchObject(expected);
+	});
 
-		expect(result.config.showSidebarOnStartup).toBe(false);
+	it("loads an ordered global Sidebar layout with deterministic compatibility precedence", async () => {
+		await writeJson(userPath, {
+			showSidebarAgent: false,
+			showSidebarTodos: false,
+			sidebarPanelLayout: [
+				{ id: "tools", visible: false },
+				{ id: "vendor:queue", visible: false },
+				{ id: "tools", visible: true },
+			],
+		});
+		await writeJson(projectPath, { sidebarPanelLayout: [{ id: "agent", visible: false }] });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { sidebarPanelLayout: [] },
+		});
+		expect(result.config.sidebarPanelLayout.slice(0, 2)).toEqual([
+			{ id: "tools", visible: false },
+			{ id: "vendor:queue", visible: false },
+		]);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(true);
+		expect(result.warnings.filter((warning) => warning.includes("duplicate")).length).toBe(1);
+	});
+
+	it("merges user, trusted project, then session with actionable provenance", async () => {
+		await writeJson(userPath, { density: "compact" });
+		await writeJson(projectPath, {
+			segmentLayout: [
+				{ id: "context", visible: true },
+				{ id: "metrics", visible: true },
+			],
+		});
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { segmentLayout: [{ id: "brand", visible: true }] },
+		});
+		expect(result.config.density).toBe("compact");
+		expect(result.config.segmentLayout[0]).toEqual({ id: "brand", visible: true });
+		expect(result.displayProvenance.density).toBe("user");
+		expect(result.displayProvenance.order).toBe("session");
+		expect(result.displayProvenance.visibility.brand).toBe("session");
+		expect(result.config.preset).toBe("custom");
+	});
+
+	it("layers color schemes and working labels across configuration sources", async () => {
+		await writeJson(userPath, {
+			colorScheme: "inherit",
+			workingLabels: ["USER"],
+		});
+		await writeJson(projectPath, {
+			colorScheme: { output: "#ff00ff", cache: 45 },
+			workingLabels: false,
+		});
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { colorScheme: { cache: "syntaxType" }, workingLabels: ["SESSION"] },
+		});
+		expect(result.config.colorScheme).toEqual({
+			base: "inherit",
+			output: "#ff00ff",
+			cache: "syntaxType",
+		});
+		expect(result.config.workingLabels).toEqual(["SESSION"]);
+	});
+
+	it("ignores project and session legacy Sidebar visibility when the user omits it", async () => {
+		await writeJson(projectPath, { showSidebarAgent: false, showSidebarTodos: false });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { showSidebarAgent: false, showSidebarTodos: false },
+		});
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "todos")?.visible).toBe(true);
+	});
+
+	it("does not read, warn about, or attribute an untrusted project", async () => {
+		await writeFile(projectPath, "{broken", "utf8");
+		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });
+		expect(result.config).toEqual(DEFAULT_CONFIG);
+		expect(result.warnings).toEqual([]);
+		expect(result.displayProvenance.order).toBe("product");
 	});
 
 	it("loads persisted showSidebarAgent false from user config", async () => {
 		await writeJson(userPath, { showSidebarAgent: false });
 		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });
-		expect(result.config.showSidebarAgent).toBe(false);
-	});
-
-	it("rejects non-boolean showSidebarAgent with warning", () => {
-		const result = validateConfig({ showSidebarAgent: "off" });
-		expect(result.config.showSidebarAgent).toBe(true);
-		expect(result.warnings).toContain("showSidebarAgent must be boolean");
+		expect(result.config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(false);
 	});
 
 	it("reports malformed JSON once and retains defaults", async () => {

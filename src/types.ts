@@ -1,5 +1,8 @@
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
+import { applyDisplayTemplate } from "./display.js";
 import type { PaletteRole } from "./palette.js";
+import type { SubagentUsageSnapshot } from "./subagent-usage.js";
+import { DEFAULT_SIDEBAR_PANEL_LAYOUT } from "./sidebar-panels.js";
 import type { WorkspacePulseData } from "./workspace-pulse.js";
 
 export type TemplateName = "editorial" | "minimal" | "classic";
@@ -35,20 +38,12 @@ export interface SidebarPanelLayoutEntry {
 }
 export type SidebarPanelLayout = SidebarPanelLayoutEntry[];
 export type ColorSchemeBase = "atelier" | "inherit";
-/**
- * A palette role override.
- *
- * Runtime-valid values are Pi theme color tokens, an empty string for the
- * terminal default foreground, #RRGGBB, or integer xterm indices 0..255.
- * Invalid direct-call specs intentionally resolve to the terminal default.
- */
+/** A palette role override: Pi theme token, terminal default, #RRGGBB, or xterm index. */
 export type PaletteColorSpec = ThemeColor | "" | `#${string}` | number;
 export type CustomColorScheme = {
 	base?: ColorSchemeBase;
 } & Partial<Record<PaletteRole, PaletteColorSpec>>;
 export type AtelierColorScheme = ColorSchemeBase | CustomColorScheme;
-/** Legacy menu vocabulary. Ornament is translated to Brand visibility. */
-export type Ornament = "none" | "restrained";
 export type ConfigurationSource = "product" | "user" | "project" | "session";
 export interface TodoItem {
 	id: number;
@@ -117,20 +112,18 @@ export interface DisplayValue {
 }
 
 export interface AtelierConfig extends DisplaySettings {
+	nerdFont: boolean;
 	shortcut: string;
 	contextWarning: number;
 	contextDanger: number;
 	currencyDecimals: number;
-	showSessionActions: boolean;
 	showSidebarToolNames: boolean;
-	showSidebarAgent: boolean;
-	showSidebarTodos: boolean;
 	showSidebarOnStartup: boolean;
 	sidebarPanelLayout: SidebarPanelLayout;
 	completionNotifications: boolean;
-	colorScheme: AtelierColorScheme;
 	/** Omitted uses the built-in playful phrases; `false` disables them; a list overrides them. */
 	workingLabels?: readonly string[] | false;
+	colorScheme: AtelierColorScheme;
 }
 
 export interface AtelierMetrics {
@@ -164,47 +157,26 @@ export interface AtelierState {
 	dirty: boolean;
 	workspacePulse: WorkspacePulseState;
 	metrics: AtelierMetrics;
+	subagentUsage?: SubagentUsageSnapshot;
 	extensionStatuses: readonly string[];
 }
 
 /** Footer render input: runtime state plus the live response metrics the runtime does not own. */
 export interface FooterState extends AtelierState {
 	performance?: ResponsePerformance;
+	workspaceLabel?: string;
 }
 
 export const DEFAULT_CONFIG: AtelierConfig = {
-	preset: "editorial",
-	shortcut: "alt+a",
-	segmentLayout: [
-		{ id: "brand", visible: false },
-		{ id: "activity", visible: true },
-		{ id: "metrics", visible: true },
-		{ id: "performance", visible: false },
-		{ id: "context", visible: true },
-		{ id: "model", visible: true },
-		{ id: "git", visible: true },
-		{ id: "statuses", visible: true },
-		{ id: "menu", visible: true },
-	],
-	density: "comfortable",
+	...applyDisplayTemplate("editorial"),
+	nerdFont: true,
+	shortcut: "f6",
 	contextWarning: 70,
 	contextDanger: 90,
 	currencyDecimals: 3,
-	showSessionActions: true,
 	showSidebarToolNames: false,
-	showSidebarAgent: true,
-	showSidebarTodos: true,
 	showSidebarOnStartup: true,
-	sidebarPanelLayout: [
-		{ id: "agent", visible: true },
-		{ id: "activity", visible: true },
-		{ id: "subagents", visible: true },
-		{ id: "alerts", visible: true },
-		{ id: "todos", visible: true },
-		{ id: "usage", visible: true },
-		{ id: "workspace", visible: true },
-		{ id: "tools", visible: true },
-	],
+	sidebarPanelLayout: DEFAULT_SIDEBAR_PANEL_LAYOUT.map((entry) => ({ ...entry })),
 	completionNotifications: true,
 	colorScheme: "atelier",
 };

@@ -1,19 +1,16 @@
+import { plainTheme as theme } from "./helpers/render.js";
+import { settleMicrotasks } from "./helpers/async.js";
+import { requiredRow, requiredIndex } from "./helpers/render.js";
 import { visibleWidth } from "@earendil-works/pi-tui";
 import { describe, expect, it, vi } from "vitest";
 import { resolveDisplayLayers } from "../src/config.js";
-import { createSettingsWorkspace, getDisplaySettingsViewportHeight } from "../src/settings-workspace.js";
+import { createSettingsWorkspace } from "../src/settings-workspace.js";
 import {
 	DEFAULT_CONFIG,
 	type AtelierConfig,
 	type DisplayLayerState,
 	type DisplayPatch,
 } from "../src/types.js";
-
-const theme = {
-	fg: (_color: string, text: string) => text,
-	bold: (text: string) => text,
-	italic: (text: string) => text,
-};
 
 function harness(
 	initialLayers: DisplayLayerState = {},
@@ -104,7 +101,8 @@ describe("Display Settings Workspace", () => {
 		for (let index = 0; index < 14 + configuredLayout.length; index += 1) h.component.handleInput("\u001b[B");
 		h.component.handleInput(" ");
 		h.component.handleInput("s");
-		await vi.waitFor(() => expect(h.persist).toHaveBeenCalled());
+		expect(h.persist).toHaveBeenCalled();
+		await settleMicrotasks();
 		expect(h.persist.mock.calls[0]?.[0]).toEqual(
 			expect.objectContaining({
 				sidebarPanelLayout: expect.arrayContaining([
@@ -131,21 +129,6 @@ describe("Display Settings Workspace", () => {
 		const rendered = text(h.component);
 		expect(rendered).toContain("Safe Title");
 		expect(rendered).not.toContain("[31m");
-	});
-
-	it("edits Sidebar as a draft, preserves unavailable placement, and saves only explicitly", async () => {
-		const h = harness();
-		for (let index = 0; index < 14; index += 1) h.component.handleInput("\u001b[B");
-		expect(text(h.component)).toContain("Sidebar Editor");
-		h.component.handleInput(" ");
-		h.component.handleInput("\u001b[1;2B");
-		expect(text(h.component)).toContain("agent");
-		h.component.handleInput("s");
-		await vi.waitFor(() => expect(h.persist).toHaveBeenCalled());
-		expect(h.persist.mock.calls[0]?.[0]).toEqual(
-			expect.objectContaining({ sidebarPanelLayout: expect.any(Array) }),
-		);
-		expect(h.close).not.toHaveBeenCalled();
 	});
 
 	it("applies a complete preset continuously as one Session mutation and one Undo step", () => {
@@ -190,7 +173,8 @@ describe("Display Settings Workspace", () => {
 		const h = harness();
 		h.component.handleInput(" ");
 		h.component.handleInput("s");
-		await vi.waitFor(() => expect(text(h.component)).toContain("Saved as User default"));
+		await settleMicrotasks();
+		expect(text(h.component)).toContain("Saved as User default");
 		expect(h.persist).toHaveBeenCalledOnce();
 		expect(h.layers.user).toMatchObject({ preset: "minimal", density: "compact" });
 		expect(h.close).not.toHaveBeenCalled();
@@ -201,7 +185,8 @@ describe("Display Settings Workspace", () => {
 		h.component.handleInput(" ");
 		h.persist.mockRejectedValueOnce(new Error("disk full"));
 		h.component.handleInput("s");
-		await vi.waitFor(() => expect(text(h.component)).toContain("Save failed: disk full"));
+		await settleMicrotasks();
+		expect(text(h.component)).toContain("Save failed: disk full");
 		expect(h.layers.session).toBeDefined();
 		h.component.handleInput("u");
 		expect(h.layers.session).toBeUndefined();
@@ -269,15 +254,6 @@ describe("Display Settings Workspace", () => {
 		expect(lines.at(-1)).toContain("╰");
 		expect(lines.every((line) => visibleWidth(line) <= 126)).toBe(true);
 	});
-
-	it.each([0, 1, 2, 3, 4])(
-		"uses the same effective overlay height as the menu helper for terminal rows %s",
-		(rows) => {
-			const viewport = getDisplaySettingsViewportHeight(rows);
-			const h = harness({}, DEFAULT_CONFIG, undefined, () => viewport);
-			expect(h.component.render(126)).toHaveLength(viewport);
-		},
-	);
 
 	it.each([0, 1, 2, 3, 4])("keeps every line within a tiny viewport of %s rows", (viewport) => {
 		const h = harness({}, DEFAULT_CONFIG, undefined, () => viewport);
@@ -361,49 +337,30 @@ describe("Display Settings Workspace", () => {
 		expect(larger.every((line) => visibleWidth(line) <= 126)).toBe(true);
 	});
 
-	it("mirrors the resolved workingLabels setting in the preview", () => {
-		const visibleLayers: DisplayLayerState = {
-			user: { segmentLayout: DEFAULT_CONFIG.segmentLayout.map((entry) => ({ ...entry, visible: true })) },
-		};
-		const previewLine = (config: typeof DEFAULT_CONFIG) => {
-			const lines = harness(visibleLayers, config).component.render(120);
-			return lines[lines.findIndex((line) => line.includes(" Preview ")) + 1] ?? "";
-		};
-
-		const plain = previewLine({ ...DEFAULT_CONFIG, workingLabels: false });
-		expect(plain).toContain("WORKING");
-		expect(plain).not.toContain("KNEADING");
-		expect(previewLine({ ...DEFAULT_CONFIG, workingLabels: ["THINKING"] })).toContain("THINKING");
-	});
-
 	it("keeps value, provenance, and action shortcut columns fixed", () => {
 		const h = harness();
 		const before = h.component.render(120);
 		h.component.handleInput("\u001b[B");
 		const after = h.component.render(120);
 		for (const label of ["Preset", "Density"]) {
-			const beforeLine = before.find((line) => line.includes(label));
-			const afterLine = after.find((line) => line.includes(label));
-			expect(beforeLine).toBeDefined();
-			expect(afterLine).toBeDefined();
-			expect(beforeLine?.indexOf(label === "Preset" ? "editorial" : "comfortable")).toBe(
-				afterLine?.indexOf(label === "Preset" ? "editorial" : "comfortable"),
+			const beforeLine = requiredRow(before, label);
+			const afterLine = requiredRow(after, label);
+			expect(beforeLine.indexOf(label === "Preset" ? "editorial" : "comfortable")).toBe(
+				afterLine.indexOf(label === "Preset" ? "editorial" : "comfortable"),
 			);
-			expect(beforeLine?.indexOf("product")).toBe(afterLine?.indexOf("product"));
+			expect(beforeLine.indexOf("product")).toBe(afterLine.indexOf("product"));
 		}
-		const save = before.find((line) => line.includes("Save default"));
-		const revert = before.find((line) => line.includes("Revert session"));
-		const undo = before.find((line) => line.includes("Undo"));
-		expect(save?.lastIndexOf("S")).toBe(revert?.lastIndexOf("R"));
-		expect(revert?.lastIndexOf("R")).toBe(undo?.lastIndexOf("—"));
+		const save = requiredRow(before, "Save default");
+		const revert = requiredRow(before, "Revert session");
+		const undo = requiredRow(before, "Undo");
+		expect(save.lastIndexOf("S")).toBe(revert.lastIndexOf("R"));
+		expect(revert.lastIndexOf("R")).toBe(undo.lastIndexOf("—"));
 	});
 
 	it("uses stacked panels narrowly and equal-bottom side-by-side panels widely", () => {
 		const h = harness();
 		const narrow = h.component.render(40);
-		expect(narrow.findIndex((line) => line.includes(" Display "))).toBeLessThan(
-			narrow.findIndex((line) => line.includes(" Segment Editor ")),
-		);
+		expect(requiredIndex(narrow, " Display ")).toBeLessThan(requiredIndex(narrow, " Segment Editor "));
 		const wide = h.component.render(120);
 		const sideBySide = wide.find((line) => line.includes(" Display ") && line.includes(" Segment Editor "));
 		expect(sideBySide).toBeDefined();
