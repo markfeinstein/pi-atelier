@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Restore the quiet dot-separated footer composition with compact right-aligned telemetry, retain Nerd Font item icons, and replace the F6 default with Alt+A.
 - Add configurable status-rail placement with the complete bottom footer as the default and the composer-embedded ribbon retained as an option.
 - Port integration-only working labels and configurable Atelier color schemes onto the 0.12.1 display and configuration APIs.
 - Add live subagent lifecycle activity beside the existing cost graph, including restored async results and complete terminal, attention, timeout, detached, paused, and failure states.

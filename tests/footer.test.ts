@@ -191,7 +191,9 @@ describe("footer performance", () => {
 });
 
 describe("composer header and telemetry", () => {
-	const config = withVisible(["activity", "model", "git", "context", "metrics", "performance", "menu"]);
+	const config = withVisible(["activity", "model", "git", "context", "metrics", "performance", "menu"], {
+		statusRailPlacement: "composer",
+	});
 	const session: FooterState = {
 		...state,
 		workspaceLabel: "pi-atelier",
@@ -218,14 +220,22 @@ describe("composer header and telemetry", () => {
 			`${icons.cache} 99%`,
 			"$5.041 (sub)",
 			`${icons.latency} 820ms  ${icons.speed} 42.3/s`,
-			`${icons.menu} F6`,
+			`${icons.menu} ⌥A`,
 		]) {
 			expect(telemetry).toContain(marker);
 			expect(header).not.toContain(marker);
 		}
 		expect(telemetry.startsWith(`${icons.input} 324k  ${icons.output} 15k`)).toBe(true);
-		expect(telemetry.endsWith(`${icons.menu} F6`)).toBe(true);
+		expect(telemetry.endsWith(`${icons.menu} ⌥A`)).toBe(true);
 		expect(visibleWidth(telemetry)).toBe(160);
+	});
+
+	it("retains grouped powerline composition for composer fallback", () => {
+		const line = stripAnsi(renderFooterLine(session, config, plainTheme, 160));
+		expect(line).toContain(
+			`● READY ${icons.separator} ${icons.model} gpt-5.6-sol · ${icons.thinking} medium`,
+		);
+		expect(line).toContain(`${icons.input} 324k  ${icons.output} 15k`);
 	});
 
 	it("hides unmeasured telemetry and omits the row when the menu is hidden", () => {
@@ -260,8 +270,8 @@ describe("composer header and telemetry", () => {
 		const telemetry = stripAnsi(
 			renderFooterLine(unmeasured, config, plainTheme, 80, true, "...", "telemetry"),
 		);
-		expect(telemetry.trim()).toBe(`${icons.menu} F6`);
-		expect(telemetry.endsWith(`${icons.menu} F6`)).toBe(true);
+		expect(telemetry.trim()).toBe(`${icons.menu} ⌥A`);
+		expect(telemetry.endsWith(`${icons.menu} ⌥A`)).toBe(true);
 		expect(visibleWidth(telemetry)).toBe(80);
 	});
 
@@ -322,46 +332,41 @@ describe("composer header and telemetry", () => {
 });
 
 describe("footer", () => {
-	it("renders icon groups in the complete footer at wide widths", () => {
+	it("renders the legacy dot-separated two-zone rail with Nerd Font items", () => {
 		const line = stripAnsi(renderFooterLine(state, DEFAULT_CONFIG, plainTheme, 160));
 		expect(line).toContain(
-			`● READY ${icons.separator} ${icons.model} gpt-5.6-sol · ${icons.thinking} medium ${icons.separator} ${icons.git} main*`,
+			`● READY · ${icons.model} gpt-5.6-sol · ${icons.thinking} medium · ${icons.git} main*`,
 		);
-		for (const text of [
-			`${icons.input} 324k`,
-			`${icons.output} 15k`,
-			`${icons.cache} 99%`,
-			"$5.041 (sub)",
-			`${icons.context} 27.0%`,
-			"F6",
-		]) {
-			expect(line).toContain(text);
-		}
-		expect(line).not.toMatch(/ATELIER|R5\.9M|CH98\.8|◔|✦|MENU/);
+		expect(line).toContain(
+			`${icons.input} 324k  ${icons.output} 15k  ${icons.cache} 99%  $5.041 (sub)  ${icons.context} 27.0% / 372k ${icons.autoCompact}  ${icons.menu} ⌥A`,
+		);
+		expect(line).not.toContain(icons.separator);
+		expect(line).not.toMatch(/ATELIER|R5\.9M|CH98\.8|◔|✦|MENU|F(?:[1-9]|1[0-2])/);
 		expect(visibleWidth(line)).toBe(160);
 	});
 
 	it("right-aligns telemetry in the complete footer", () => {
 		const line = stripAnsi(renderFooterLine(state, DEFAULT_CONFIG, plainTheme, 180));
-		expect(line.endsWith("F6")).toBe(true);
+		expect(line.endsWith("⌥A")).toBe(true);
 		expect(line.indexOf("● READY")).toBe(0);
 		expect(line).toContain("main*");
 		expect(line).toContain(`${icons.input} 324k`);
 		expect(line.indexOf(`${icons.input} 324k`)).toBeGreaterThan(line.indexOf("main*"));
 	});
 
-	it("dims group dividers and keeps related identity items together", () => {
+	it("dims quiet left dividers and keeps right telemetry compact", () => {
 		const line = renderFooterLine(state, DEFAULT_CONFIG, namedTheme("dark"), 400);
-		expect(line).toContain(`${darkRgb.dim} ${icons.separator} \u001b[39m`);
+		expect(line).not.toContain(icons.separator);
 		expect(line).toContain(`${darkRgb.dim} · \u001b[39m`);
 		expect(stripAnsi(line)).toContain(`${icons.model} gpt-5.6-sol · ${icons.thinking} medium`);
+		expect(stripAnsi(line)).toContain(`${icons.input} 324k  ${icons.output} 15k`);
 		expect(stripAnsi(line)).not.toContain("│");
 	});
 
 	it("drops secondary detail before workspace identity and required context", () => {
 		const [menuGone, thinkingGone, costGone, inputGone, outputGone, cacheGone, gitGone, modelGone] =
 			disappearanceWidths([
-				"F6",
+				"⌥A",
 				"medium",
 				"$5.041",
 				`${icons.input} 324k`,
@@ -435,7 +440,7 @@ describe("footer", () => {
 			expect(classic).toContain(text);
 		}
 		expect(classic).not.toContain("● READY");
-		expect(classic).not.toContain("F6");
+		expect(classic).not.toContain("⌥A");
 	});
 
 	it("uses fixed dark colors for named custom themes", () => {
@@ -458,7 +463,7 @@ describe("footer", () => {
 		expect(line).toContain(`${darkRgb.cyan}${icons.cache}\u001b[39m ${darkRgb.cyan}99%\u001b[39m`);
 		expect(line).toContain(`${darkRgb.amber}$5.041\u001b[39m${darkRgb.muted} (sub)\u001b[39m`);
 		expect(line).toContain(`${darkRgb.blue}${icons.context}\u001b[39m ${darkRgb.blue}27.0%\u001b[39m`);
-		expect(line).toContain(`${darkRgb.purple}F6\u001b[39m`);
+		expect(line).toContain(`${darkRgb.purple}⌥A\u001b[39m`);
 	});
 
 	it("colors every classic cache value cyan while keeping labels muted", () => {
@@ -841,9 +846,9 @@ describe("footer", () => {
 		const modelColumns = lines.map((line) => line.indexOf("gpt-5.6-sol"));
 		expect(modelColumns[0]).toBeGreaterThan(0);
 		expect(new Set(modelColumns).size).toBe(1);
-		expect(lines[0]).toContain(`CLAUDING... ${icons.separator} ${icons.model} gpt-5.6-sol`);
-		expect(lines[1]).toContain(`CLAUDING..  ${icons.separator} ${icons.model} gpt-5.6-sol`);
-		expect(lines[2]).toContain(`CLAUDING.   ${icons.separator} ${icons.model} gpt-5.6-sol`);
+		expect(lines[0]).toContain(`CLAUDING... · ${icons.model} gpt-5.6-sol`);
+		expect(lines[1]).toContain(`CLAUDING..  · ${icons.model} gpt-5.6-sol`);
+		expect(lines[2]).toContain(`CLAUDING.   · ${icons.model} gpt-5.6-sol`);
 	});
 
 	it("animates shrinking dots every 400 ms while retaining the selected phrase", () => {

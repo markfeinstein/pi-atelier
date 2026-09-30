@@ -417,12 +417,15 @@ function buildItems(
 		}
 
 		if (segment === "menu") {
+			const shortcutLabel = (value: string): string =>
+				value.toLowerCase() === "alt+a" ? "⌥A" : value.toUpperCase();
 			const configuredShortcut = sanitize(config.shortcut);
-			const configuredLabel = configuredShortcut.toUpperCase();
+			const configuredLabel = shortcutLabel(configuredShortcut);
+			const defaultLabel = shortcutLabel(DEFAULT_CONFIG.shortcut);
 			const shortcut =
-				configuredShortcut && configuredShortcut.toLowerCase() !== DEFAULT_CONFIG.shortcut
-					? `${DEFAULT_CONFIG.shortcut.toUpperCase()} / ${configuredLabel}`
-					: DEFAULT_CONFIG.shortcut.toUpperCase();
+				configuredShortcut && configuredShortcut.toLowerCase() !== DEFAULT_CONFIG.shortcut.toLowerCase()
+					? `${defaultLabel} / ${configuredLabel}`
+					: defaultLabel;
 			if (shortcut) {
 				const rendered = palette.paint("menu", shortcut);
 				add({
@@ -458,29 +461,33 @@ function renderItems(
 		.join("");
 }
 
+function renderLegacyItems(items: FooterItem[], compactIds: Set<FooterItemId>, separator: string): string {
+	return items
+		.map((item) => (compactIds.has(item.id) ? item.compact : item.full))
+		.filter(Boolean)
+		.join(separator);
+}
+
 function compose(
 	items: FooterItem[],
 	width: number,
 	palette: AtelierPalette,
 	separator: string,
 	flow = false,
+	legacyFooter = false,
 ): string {
 	const active = [...items];
 	const compactIds = new Set<FooterItemId>();
+	const leftItems = () => active.filter((item) => item.zone === "left");
+	const rightItems = () => active.filter((item) => item.zone === "right");
 	const left = () =>
-		renderItems(
-			active.filter((item) => item.zone === "left"),
-			compactIds,
-			palette,
-			separator,
-		);
+		legacyFooter
+			? renderLegacyItems(leftItems(), compactIds, palette.paint("dim", " · "))
+			: renderItems(leftItems(), compactIds, palette, separator);
 	const right = () =>
-		renderItems(
-			active.filter((item) => item.zone === "right"),
-			compactIds,
-			palette,
-			separator,
-		);
+		legacyFooter
+			? renderLegacyItems(rightItems(), compactIds, "  ")
+			: renderItems(rightItems(), compactIds, palette, separator);
 	const measured = () => {
 		const leftText = left();
 		const rightText = right();
@@ -559,7 +566,14 @@ export function renderFooterLine(
 			.filter((item) => !HEADER_ITEMS.has(item.id) && available[item.id] !== false)
 			.map((item) => ({ ...item, zone: item.id === "performance" || item.id === "menu" ? "right" : "left" }));
 	}
-	const line = compose(items, width, palette, symbols.separator, surface === "header");
+	const line = compose(
+		items,
+		width,
+		palette,
+		symbols.separator,
+		surface === "header",
+		surface === "all" && config.statusRailPlacement === "footer",
+	);
 	if (surface === "telemetry" && items.length > 0 && items.every((item) => item.zone === "right")) {
 		return `${" ".repeat(Math.max(0, width - visibleWidth(line)))}${line}`;
 	}

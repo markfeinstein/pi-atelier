@@ -21,6 +21,7 @@ describe("configuration validation", () => {
 		}
 		expect(DEFAULT_CONFIG.showSidebarToolNames).toBe(false);
 		expect(DEFAULT_CONFIG.completionNotifications).toBe(true);
+		expect(DEFAULT_CONFIG.shortcut).toBe("alt+a");
 		expect(DEFAULT_CONFIG.statusRailPlacement).toBe("footer");
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => entry.id)).toEqual([
@@ -65,6 +66,12 @@ describe("configuration validation", () => {
 				"Unknown colorScheme role: mystery",
 			]),
 		);
+	});
+
+	it("preserves Alt+A and trims custom shortcuts", () => {
+		expect(validateConfig({ shortcut: "alt+a" }).config.shortcut).toBe("alt+a");
+		expect(validateConfig({ shortcut: " ALT+A " }).config.shortcut).toBe("ALT+A");
+		expect(validateConfig({ shortcut: " ctrl+shift+a " }).config.shortcut).toBe("ctrl+shift+a");
 	});
 
 	it("validates status rail placement without replacing a valid lower value", () => {

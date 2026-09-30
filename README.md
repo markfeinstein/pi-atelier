@@ -31,7 +31,7 @@ Start Pi, then open the control center:
 /atelier
 ```
 
-You can also press **F6** on macOS and Windows (**Fn+F6** on keyboards with media keys). If icons appear as boxes, select **Settings → Font mode → Plain text**. For icon setup, see [Terminal font](#terminal-font).
+You can also press **Alt+A** on macOS and Windows. If icons appear as boxes, select **Settings → Font mode → Plain text**. For icon setup, see [Terminal font](#terminal-font).
 
 Pi packages run with your system permissions. Review third-party source before installation.
 
@@ -60,7 +60,7 @@ No telemetry or external network requests. See [Privacy](#privacy).
 
 ## Use
 
-Open `/atelier` or press **F6** to change display settings, control the sidebar, select models and tools, rename the session, or compact it.
+Open `/atelier` or press **Alt+A** to change display settings, control the sidebar, select models and tools, rename the session, or compact it.
 
 ```text
 /atelier display            # display settings
@@ -106,7 +106,7 @@ Project settings override user settings. Session changes override both. Global f
 {
   "preset": "editorial",
   "nerdFont": true,
-  "shortcut": "f6",
+  "shortcut": "alt+a",
   "density": "comfortable",
   "contextWarning": 70,
   "contextDanger": 90,
@@ -121,7 +121,7 @@ Project settings override user settings. Session changes override both. Global f
 
 Use **Settings → Display** to reorder or hide status rail segments and sidebar panels. Undo restores the latest Display or Sidebar edit, including a Display Revert. Legacy user settings `showSidebarAgent` and `showSidebarTodos` remain supported when `sidebarPanelLayout` is absent.
 
-`statusRailPlacement` controls where the rail appears. The default, `"footer"`, keeps Atelier's rounded editor and renders the complete rail below the composer. Set it to `"composer"` to embed identity and context in the composer's top border and leave measured telemetry below it. Composer mode automatically falls back to the complete footer when the header is unavailable or the terminal is too narrow or short.
+`statusRailPlacement` controls where the rail appears. The default, `"footer"`, keeps Atelier's rounded editor and renders the complete rail below the composer with quiet dot-separated identity items and compact right-aligned telemetry; Nerd Font item icons remain available. Set it to `"composer"` to embed identity and context in the composer's top border and leave measured telemetry below it. Composer mode automatically falls back to its complete grouped footer when the header is unavailable or the terminal is too narrow or short.
 
 `workingLabels` controls the working-state phrase. Omit it for the built-in phrase set, set it to `false` for a static `WORKING` label, or provide a non-empty string array. One phrase is selected per work cycle and remains stable until that cycle ends.
 
@@ -131,7 +131,7 @@ Extension statuses are sanitized before rendering, including CSI, OSC, C1, and s
 
 ## Troubleshooting
 
-- Shortcut unavailable: use `/atelier`, change `shortcut`, then run `/reload`. The default is `f6` on both macOS and Windows; keyboards with media keys may require Fn+F6 on either platform. Saved `alt+a` settings now resolve to `f6`; Alt+A is no longer registered. Other custom `shortcut` settings add an alternative binding alongside F6. Other extensions or terminal key mappings can still intercept F6.
+- Shortcut unavailable: use `/atelier`, change `shortcut`, then run `/reload`. The default is `alt+a` on macOS and Windows. Other custom `shortcut` settings add an alternative binding alongside Alt+A. Other extensions or terminal key mappings can still intercept Alt+A.
 - Status rail missing: use TUI mode and check for another custom footer.
 - Missing icon glyphs: choose **Settings → Font mode: Plain text**, or select a Nerd Font in your terminal settings.
 - Metric mismatch: token and cost totals cover the session; context usage covers the current model context.
