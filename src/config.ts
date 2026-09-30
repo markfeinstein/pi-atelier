@@ -44,7 +44,6 @@ export interface LoadConfigOptions {
 interface SidebarResolution {
 	layout: AtelierConfig["sidebarPanelLayout"];
 	warnings: string[];
-	authoritative: boolean;
 }
 
 function cloneSidebarLayout(
@@ -99,7 +98,6 @@ function resolveSidebarLayout(
 		return {
 			layout: parsed ?? cloneSidebarLayout(base.sidebarPanelLayout),
 			warnings,
-			authoritative: true,
 		};
 	}
 	const layout = cloneSidebarLayout(base.sidebarPanelLayout);
@@ -109,7 +107,7 @@ function resolveSidebarLayout(
 		setSidebarVisibility(layout, "agent", user.showSidebarAgent);
 	if (user && typeof user.showSidebarTodos === "boolean")
 		setSidebarVisibility(layout, "todos", user.showSidebarTodos);
-	return { layout, warnings, authoritative: false };
+	return { layout, warnings };
 }
 
 const presets = new Set<PresetName>(["editorial", "minimal", "classic", "custom"]);
@@ -117,6 +115,7 @@ const densities = new Set(["comfortable", "compact"]);
 const ornaments = new Set(["none", "restrained"]);
 const colorSchemeBases = new Set<ColorSchemeBase>(["atelier", "inherit"]);
 const paletteRoles = new Set<string>(PALETTE_ROLES);
+
 const isRecord = (value: unknown): value is Record<string, unknown> =>
 	typeof value === "object" && value !== null && !Array.isArray(value);
 
@@ -128,6 +127,7 @@ const cloneConfig = (config: AtelierConfig): AtelierConfig => ({
 	colorScheme: cloneColorScheme(config.colorScheme),
 	segmentLayout: config.segmentLayout.map((entry) => ({ ...entry })),
 	sidebarPanelLayout: cloneSidebarLayout(config.sidebarPanelLayout),
+	...(Array.isArray(config.workingLabels) ? { workingLabels: [...config.workingLabels] } : {}),
 });
 
 interface CompatibilityState {
@@ -385,12 +385,6 @@ function parseColorScheme(value: unknown, warnings: string[]): AtelierColorSchem
 	return result;
 }
 
-/**
- * Layers `colorScheme` field by field, matching how display deviations layer over a template.
- * A bare named scheme resets the value. A custom object merges role by role over the layer below
- * and may replace the base without discarding lower role overrides. `previous` is `unknown` because
- * it may be a value read straight from disk; anything unrecognized there is re-validated on the next load.
- */
 function layerColorScheme(previous: unknown, next: AtelierColorScheme): AtelierColorScheme {
 	if (typeof next === "string") return next;
 	if (typeof previous === "string")
@@ -401,14 +395,22 @@ function layerColorScheme(previous: unknown, next: AtelierColorScheme): AtelierC
 	return previousRoles ? ({ ...previousRoles, ...next } as CustomColorScheme) : next;
 }
 
-function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string[]): void {
+function applyNonDisplay(
+	input: unknown,
+	config: AtelierConfig,
+	warnings: string[],
+	userLayer: boolean,
+): void {
 	if (!isRecord(input)) {
 		if (input !== undefined) warnings.push("Configuration must be a JSON object");
 		return;
 	}
 	if (typeof input.shortcut === "string") {
-		if (input.shortcut.trim()) config.shortcut = input.shortcut.trim();
-		else warnings.push("Shortcut cannot be empty");
+		const shortcut = input.shortcut.trim();
+		if (shortcut) {
+			// Retire the former default even when an older config saved it explicitly.
+			config.shortcut = shortcut.toLowerCase() === "alt+a" ? DEFAULT_CONFIG.shortcut : shortcut;
+		} else warnings.push("Shortcut cannot be empty");
 	} else if ("shortcut" in input) warnings.push("shortcut must be a string");
 	const invalidThresholdType =
 		("contextWarning" in input && typeof input.contextWarning !== "number") ||
@@ -431,15 +433,25 @@ function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string
 		else warnings.push("currencyDecimals must be an integer from 0 through 6");
 	}
 	for (const key of [
-		"showSessionActions",
 		"showSidebarToolNames",
-		"showSidebarAgent",
-		"showSidebarTodos",
 		"showSidebarOnStartup",
 		"completionNotifications",
+		"nerdFont",
 	] as const) {
-		if (typeof input[key] === "boolean") config[key] = input[key];
-		else if (key in input) warnings.push(`${key} must be boolean`);
+		if (typeof input[key] === "boolean") {
+			if (
+				userLayer ||
+				(key !== "showSidebarOnStartup" && key !== "completionNotifications" && key !== "nerdFont")
+			)
+				config[key] = input[key];
+		} else if (key in input) warnings.push(`${key} must be boolean`);
+	}
+	for (const key of ["showSidebarAgent", "showSidebarTodos"] as const) {
+		if (key in input && typeof input[key] !== "boolean") warnings.push(`${key} must be boolean`);
+	}
+	if ("colorScheme" in input) {
+		const parsed = parseColorScheme(input.colorScheme, warnings);
+		if (parsed !== undefined) config.colorScheme = layerColorScheme(config.colorScheme, parsed);
 	}
 	if ("workingLabels" in input) {
 		const value = input.workingLabels;
@@ -457,45 +469,34 @@ function applyNonDisplay(input: unknown, config: AtelierConfig, warnings: string
 			if (labels.length !== value.length) warnings.push("workingLabels entries must be non-empty strings");
 		} else warnings.push("workingLabels must be false or an array of strings");
 	}
-	if ("colorScheme" in input) {
-		const parsed = parseColorScheme(input.colorScheme, warnings);
-		if (parsed !== undefined) config.colorScheme = layerColorScheme(config.colorScheme, parsed);
-	}
 }
 
-function applyGlobalSidebarCompatibility(
-	config: AtelierConfig,
-	input: unknown,
-	base: Pick<AtelierConfig, "showSidebarAgent" | "showSidebarTodos"> = DEFAULT_CONFIG,
-): void {
-	config.showSidebarAgent = base.showSidebarAgent;
-	config.showSidebarTodos = base.showSidebarTodos;
-	const global = record(input);
-	if (typeof global?.showSidebarAgent === "boolean") config.showSidebarAgent = global.showSidebarAgent;
-	if (typeof global?.showSidebarTodos === "boolean") config.showSidebarTodos = global.showSidebarTodos;
-}
-
-export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CONFIG): ConfigLoadResult {
+/** Resolve both file-backed and direct configuration through the same layer rules. */
+function resolveConfig(
+	input: { user?: unknown; project?: unknown; session?: unknown },
+	base: AtelierConfig = DEFAULT_CONFIG,
+): ConfigLoadResult {
 	const config = cloneConfig(base);
 	const warnings: string[] = [];
-	applyNonDisplay(input, config, warnings);
-	const inputRecord = record(input);
-	const displayLayers: DisplayLayerState = inputRecord ? { user: inputRecord } : {};
+	const displayLayers: DisplayLayerState = {};
+	for (const source of ["user", "project", "session"] as const) {
+		applyNonDisplay(input[source], config, warnings, source === "user");
+		const layer = record(input[source]);
+		if (layer) displayLayers[source] = layer;
+	}
 	const resolved = resolveDisplayLayers(displayLayers, base);
 	const sidebar = resolveSidebarLayout(displayLayers, base);
-	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
-	if (sidebar.authoritative) {
-		config.showSidebarAgent =
-			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
-		config.showSidebarTodos =
-			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
-	} else applyGlobalSidebarCompatibility(config, input, base);
+	Object.assign(config, resolved.display, { sidebarPanelLayout: sidebar.layout });
 	return {
 		config,
 		warnings: [...new Set([...warnings, ...resolved.warnings, ...sidebar.warnings])],
 		displayLayers,
 		displayProvenance: resolved.provenance,
 	};
+}
+
+export function validateConfig(input: unknown, base: AtelierConfig = DEFAULT_CONFIG): ConfigLoadResult {
+	return resolveConfig({ user: input }, base);
 }
 
 async function readJson(path: string): Promise<{ value?: unknown; warning?: string }> {
@@ -510,45 +511,14 @@ async function readJson(path: string): Promise<{ value?: unknown; warning?: stri
 export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoadResult> {
 	const user = await readJson(options.userPath);
 	const project = options.projectTrusted ? await readJson(options.projectPath) : {};
-	const config = cloneConfig(DEFAULT_CONFIG);
-	const warnings: string[] = [];
-	applyNonDisplay(user.value, config, warnings);
-	if (options.projectTrusted) applyNonDisplay(project.value, config, warnings);
-	applyNonDisplay(options.session, config, warnings);
-	const userRecord = record(user.value);
-	const projectRecord = options.projectTrusted ? record(project.value) : undefined;
-	const sessionRecord = record(options.session);
-	const displayLayers: DisplayLayerState = {
-		...(userRecord ? { user: userRecord } : {}),
-		...(projectRecord ? { project: projectRecord } : {}),
-		...(sessionRecord ? { session: sessionRecord } : {}),
-	};
-	const resolved = resolveDisplayLayers(displayLayers);
-	const sidebar = resolveSidebarLayout(displayLayers);
-	Object.assign(config, resolved.display, { sidebarPanelLayout: cloneSidebarLayout(sidebar.layout) });
-	if (sidebar.authoritative) {
-		config.showSidebarAgent =
-			sidebar.layout.find((entry) => entry.id === "agent")?.visible ?? config.showSidebarAgent;
-		config.showSidebarTodos =
-			sidebar.layout.find((entry) => entry.id === "todos")?.visible ?? config.showSidebarTodos;
-	}
-	// Startup visibility, completion notifications, and legacy Sidebar visibility are global-user-only.
-	const global = cloneConfig(DEFAULT_CONFIG);
-	applyNonDisplay(user.value, global, []);
-	config.showSidebarOnStartup = global.showSidebarOnStartup;
-	config.completionNotifications = global.completionNotifications;
-	if (!sidebar.authoritative) applyGlobalSidebarCompatibility(config, user.value);
+	const resolved = resolveConfig({ user: user.value, project: project.value, session: options.session });
 	return {
-		config,
+		...resolved,
 		warnings: [
 			...new Set(
-				[user.warning, project.warning, ...warnings, ...resolved.warnings, ...sidebar.warnings].filter(
-					(item): item is string => !!item,
-				),
+				[user.warning, project.warning, ...resolved.warnings].filter((item): item is string => !!item),
 			),
 		],
-		displayLayers,
-		displayProvenance: resolved.provenance,
 	};
 }
 

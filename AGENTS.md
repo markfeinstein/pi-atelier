@@ -14,6 +14,19 @@ Triage uses the five default canonical labels. See `docs/agents/triage-labels.md
 
 Domain documentation uses a single-context layout. See `docs/agents/domain.md`.
 
-## npm publishing
+## Npm publishing & Github release
 
-This branch publishes as the normal `@markfeinstein/pi-atelier` package line. Follow `docs/release.md`; routine releases use `npm publish --access public`. The maintainer completes npm browser authentication manually in their terminal. Do not request, accept, or pass an OTP through the agent. After the maintainer reports success, verify the published version and `latest` dist-tag before pushing the release commit and Git tag.
+Publish releases with `npm publish --access public`. The maintainer completes npm browser authentication manually in their terminal. Do not request, accept, or pass an OTP through the agent. After the maintainer reports success, verify the published version and `latest` dist-tag before pushing the release commit and Git tag.
+
+Tag a new release on github at the end. 
+
+## Tone
+
+Keep your response tone concise, technical, and straightforward. Do not include any flair or prose.
+
+## Tests
+
+Do not write any unit tests or e2e tests associated with TUI changes. Instead, give the user a TODO list to manually verify the TUI changes. 
+
+Give the user a CLI command to open a temporal Pi agent session to check TUI changes. It should only open with the updated pi-atelier extension, otherwise there would result in a conflict with the locally installed pi-atelier. 
+

@@ -16,6 +16,8 @@ export const PALETTE_ROLES = [
 	"menu",
 	"warning",
 	"error",
+	"chartPink",
+	"chartGreen",
 ] as const;
 
 export type PaletteRole = (typeof PALETTE_ROLES)[number];
@@ -42,6 +44,8 @@ const FIXED_DARK: Record<PaletteRole, Rgb> = {
 	menu: [177, 140, 255],
 	warning: [255, 159, 67],
 	error: [255, 93, 115],
+	chartPink: [244, 114, 182],
+	chartGreen: [74, 222, 128],
 };
 
 const THEME_TOKENS: Record<PaletteRole, ThemeColor> = {
@@ -59,6 +63,8 @@ const THEME_TOKENS: Record<PaletteRole, ThemeColor> = {
 	menu: "accent",
 	warning: "warning",
 	error: "error",
+	chartPink: "syntaxString",
+	chartGreen: "success",
 };
 
 const LEGACY_UNNAMED_THEME: Record<PaletteRole, ThemeColor> = {
@@ -82,6 +88,8 @@ const NO_COLOR: Record<PaletteRole, ThemeColor> = {
 	menu: "text",
 	warning: "warning",
 	error: "error",
+	chartPink: "text",
+	chartGreen: "text",
 };
 
 export const PI_THEME_COLOR_TOKENS = [
@@ -135,11 +143,11 @@ export const PI_THEME_COLOR_TOKENS = [
 
 const piThemeColorTokens = new Set<ThemeColor>(PI_THEME_COLOR_TOKENS);
 
-/** Compile-time guard: Pi token additions must also enter the runtime JSON allowlist. */
 type AssertNever<T extends never> = T;
 type _MissingPiThemeColorTokens = AssertNever<Exclude<ThemeColor, (typeof PI_THEME_COLOR_TOKENS)[number]>>;
 
 export interface AtelierPalette {
+	readonly colorEnabled?: boolean;
 	paint(role: PaletteRole, text: string): string;
 }
 
@@ -155,11 +163,10 @@ function defaultColor(text: string): string {
 	return `\u001b[39m${text}\u001b[39m`;
 }
 
-function themeColor(theme: PaletteTheme, token: ThemeColor, text: string): string {
-	return theme.fg(token, text);
+function themeColor(theme: PaletteTheme, color: ThemeColor, text: string): string {
+	return theme.fg(color, text);
 }
 
-/** A role override narrowed to exactly one way of painting, resolved once per palette. */
 type ResolvedColor =
 	| { readonly kind: "rgb"; readonly value: Rgb }
 	| { readonly kind: "indexed"; readonly value: number }
@@ -181,7 +188,6 @@ function isColorSchemeObject(value: unknown): value is Record<string, unknown> {
 	return typeof value === "object" && value !== null;
 }
 
-/** Malformed or runtime-invalid specs resolve to the terminal default. */
 function resolveColorSpec(value: unknown): ResolvedColor {
 	const spec = normalizePaletteColorSpec(value);
 	if (spec === undefined) return { kind: "default" };
@@ -205,8 +211,7 @@ function resolveOverrides(colorScheme: unknown): ReadonlyMap<PaletteRole, Resolv
 	if (!isColorSchemeObject(colorScheme)) return overrides;
 	for (const role of PALETTE_ROLES) {
 		if (!Object.hasOwn(colorScheme, role)) continue;
-		const value = colorScheme[role];
-		overrides.set(role, resolveColorSpec(value));
+		overrides.set(role, resolveColorSpec(colorScheme[role]));
 	}
 	return overrides;
 }
@@ -244,6 +249,7 @@ export function createPalette(
 	};
 
 	return {
+		colorEnabled,
 		paint(role, text) {
 			if (!colorEnabled) return themeColor(theme, NO_COLOR[role], text);
 			const override = overrides.get(role);

@@ -1,0 +1,3 @@
+interface:
+  display_name: "Deslop"
+  short_description: "Diff-scoped AI-slop cleanup pass: strip comment slop, defensive-check slop, type-laundering, and style drift from the current branch diff before autoreview"

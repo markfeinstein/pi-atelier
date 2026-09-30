@@ -1,6 +1,6 @@
 {
-	"name": "@markfeinstein/pi-atelier",
-	"version": "0.10.1",
+	"name": "pi-atelier",
+	"version": "0.12.1",
 	"description": "A responsive status rail and live activity sidebar for Pi",
 	"type": "module",
 	"license": "MIT",
@@ -14,7 +14,9 @@
 	"files": [
 		"extensions",
 		"src",
-		"assets",
+		"assets/demo.png",
+		"assets/preview.png",
+		"assets/color-schemes.gif",
 		"README.md",
 		"CHANGELOG.md",
 		"LICENSE"
@@ -23,29 +25,38 @@
 		"extensions": [
 			"./extensions/index.ts"
 		],
-		"image": "https://raw.githubusercontent.com/markfeinstein/pi-atelier/integration/assets/preview.png"
+		"image": "https://raw.githubusercontent.com/michaelmjhhhh/pi-atelier/main/assets/preview.png"
 	},
 	"repository": {
 		"type": "git",
-		"url": "git+https://github.com/markfeinstein/pi-atelier.git"
+		"url": "git+https://github.com/michaelmjhhhh/pi-atelier.git"
 	},
 	"bugs": {
-		"url": "https://github.com/markfeinstein/pi-atelier/issues"
+		"url": "https://github.com/michaelmjhhhh/pi-atelier/issues"
 	},
-	"homepage": "https://github.com/markfeinstein/pi-atelier/tree/integration#readme",
+	"homepage": "https://github.com/michaelmjhhhh/pi-atelier#readme",
 	"scripts": {
 		"test": "vitest run",
 		"test:watch": "vitest",
 		"typecheck": "tsc --noEmit",
-		"lint": "biome lint .",
 		"format": "biome format --write .",
 		"format:check": "biome format .",
 		"check:pack": "node scripts/verify-pack.mjs",
-		"check": "npm run typecheck && npm run lint && npm run format:check && npm test && npm run check:pack"
+		"check:audit": "npm audit --audit-level=low",
+		"check:install": "node scripts/verify-install.mjs",
+		"check": "npm run typecheck && npm run format:check && npm test && npm run check:pack && npm run check:audit && npm run check:install"
 	},
 	"peerDependencies": {
 		"@earendil-works/pi-coding-agent": ">=0.84.0",
 		"@earendil-works/pi-tui": ">=0.84.0"
+	},
+	"peerDependenciesMeta": {
+		"@earendil-works/pi-coding-agent": {
+			"optional": true
+		},
+		"@earendil-works/pi-tui": {
+			"optional": true
+		}
 	},
 	"devDependencies": {
 		"@biomejs/biome": "2.5.4",
@@ -53,12 +64,14 @@
 		"@earendil-works/pi-tui": "0.84.0",
 		"@types/node": "24.12.4",
 		"typescript": "5.9.3",
-		"vitest": "4.1.10"
+		"vitest": "4.1.11"
+	},
+	"overrides": {
+		"@earendil-works/pi-coding-agent@0.84.0": {
+			"undici": "8.10.2"
+		}
 	},
 	"engines": {
 		"node": ">=22.19.0"
-	},
-	"publishConfig": {
-		"access": "public"
 	}
 }
