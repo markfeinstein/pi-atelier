@@ -91,8 +91,26 @@ describe("extension registration", () => {
 		);
 		expect(editor).toBeInstanceOf(AtelierEditor);
 		expect(editor.render(32)[0]).toMatch(/^╭─+╮$/);
-		expect(h.shortcuts).toContain("f6");
+		expect(h.shortcuts).toContain("alt+a");
 		expect(h.shortcuts).toContain("ctrl+shift+r");
+		expect(h.shortcuts.some((key) => /^f(?:[1-9]|1[0-2])$/i.test(key))).toBe(false);
+	});
+
+	it("keeps Alt+A as the fallback when a custom shortcut is configured", async () => {
+		await withPersistedUserConfig({ shortcut: "ctrl+shift+a" }, async () => {
+			const h = harness();
+			await start(h);
+			expect(h.shortcuts).toEqual(expect.arrayContaining(["alt+a", "ctrl+shift+a", "ctrl+shift+r"]));
+			expect(h.shortcuts.some((key) => /^f(?:[1-9]|1[0-2])$/i.test(key))).toBe(false);
+			const { footer } = mountComposer(h);
+			try {
+				const rail = footer.render(160).join("\n");
+				expect(rail).toContain("⌥A / CTRL+SHIFT+A");
+				expect(rail).not.toMatch(/F(?:[1-9]|1[0-2])/);
+			} finally {
+				footer.dispose();
+			}
+		});
 	});
 
 	it("defaults to a rounded composer with the complete status rail below it", async () => {
@@ -184,12 +202,12 @@ describe("extension registration", () => {
 		},
 	);
 
-	it("routes f6 to the Control Center", async () => {
+	it("routes Alt+A to the Control Center", async () => {
 		const h = harness("tui", "linux", true);
 		await start(h);
 		const before = h.custom.mock.calls.length;
 
-		const opening = h.shortcutHandlers.get("f6")?.(h.ctx);
+		const opening = h.shortcutHandlers.get("alt+a")?.(h.ctx);
 		await h.mounted(1);
 		expect(h.overlays).toHaveLength(2);
 

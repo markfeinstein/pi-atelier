@@ -159,7 +159,7 @@ export default function atelierExtension(
 	const noopRender = (): void => undefined;
 	let activeSession: ActiveSession | undefined;
 	let enabled = true;
-	let shortcutRegistered = false;
+	const registeredMenuShortcuts = new Set<string>();
 	let resizeShortcutRegistered = false;
 	let lifecycleToken: LifecycleToken = { id: 0 };
 	let sidebarToolNamesSaveQueue: Promise<void> = Promise.resolve();
@@ -1013,15 +1013,18 @@ export default function atelierExtension(
 			publishedSession = nextSession;
 			if (previousSession) disposeSession(previousSession, { clearFooter: true });
 
-			if (isFresh() && !shortcutRegistered) {
+			if (isFresh()) {
 				const registerMenuShortcut = (key: string): void => {
+					const normalizedKey = key.trim().toLowerCase();
+					if (registeredMenuShortcuts.has(normalizedKey)) return;
 					pi.registerShortcut(key as KeyId, {
 						description: "Open Pi Atelier",
 						handler: async (shortcutContext) => openMenu(shortcutContext),
 					});
+					registeredMenuShortcuts.add(normalizedKey);
 				};
 				registerMenuShortcut(DEFAULT_CONFIG.shortcut);
-				if (loaded.config.shortcut.toLowerCase() !== DEFAULT_CONFIG.shortcut) {
+				if (loaded.config.shortcut.toLowerCase() !== DEFAULT_CONFIG.shortcut.toLowerCase()) {
 					try {
 						registerMenuShortcut(loaded.config.shortcut);
 					} catch {
@@ -1031,7 +1034,6 @@ export default function atelierExtension(
 						);
 					}
 				}
-				shortcutRegistered = true;
 			}
 			if (isFresh() && !resizeShortcutRegistered) {
 				pi.registerShortcut("ctrl+shift+r" as KeyId, {

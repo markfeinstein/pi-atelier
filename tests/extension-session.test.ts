@@ -31,7 +31,7 @@ describe("extension session", () => {
 				const header = editor.render(80)[0];
 				for (const text of ["● READY", "project", "main", "10.0%"]) expect(header).toContain(text);
 				const telemetry = footer.render(80).join("\n");
-				expect(telemetry).toContain("F6");
+				expect(telemetry).toContain("⌥A");
 				for (const text of ["● READY", "project", "main", "10.0%"]) expect(telemetry).not.toContain(text);
 
 				// Pi selectors replace the editor without disposing it or rendering it again.
@@ -52,6 +52,40 @@ describe("extension session", () => {
 		await start(h, replacementContext(h.ctx, "Replacement session"));
 
 		expect(h.pi.registerShortcut.mock.calls.filter(([key]) => key === "ctrl+shift+r")).toHaveLength(1);
+	});
+
+	it("registers each replacement session shortcut once and advertises the active shortcut", async () => {
+		const configuredShortcuts = ["ctrl+shift+a", "ctrl+shift+b"];
+		const h = harness("tui", "linux", false, {
+			loadConfig: async (options) => {
+				const loaded = await loadTestConfig(options);
+				return {
+					...loaded,
+					config: { ...loaded.config, shortcut: configuredShortcuts.shift() ?? loaded.config.shortcut },
+				};
+			},
+		});
+		await start(h);
+		await start(h, replacementContext(h.ctx, "Replacement session"));
+
+		expect(h.shortcutHandlers.has("ctrl+shift+a")).toBe(true);
+		expect(h.shortcutHandlers.has("ctrl+shift+b")).toBe(true);
+		for (const key of ["alt+a", "ctrl+shift+a", "ctrl+shift+b"]) {
+			expect(h.pi.registerShortcut.mock.calls.filter(([registered]) => registered === key)).toHaveLength(1);
+		}
+		expect(h.shortcuts.some((key) => /^f(?:[1-9]|1[0-2])$/i.test(key))).toBe(false);
+
+		const activeFooterFactory = h.setFooter.mock.calls.findLast(
+			([factory]) => typeof factory === "function",
+		)?.[0];
+		const footer = renderFooter(activeFooterFactory, vi.fn());
+		try {
+			const rail = footer.render(160).join("\n");
+			expect(rail).toContain("⌥A / CTRL+SHIFT+B");
+			expect(rail).not.toContain("CTRL+SHIFT+A");
+		} finally {
+			footer.dispose();
+		}
 	});
 
 	it("retires active TUI state when a non-TUI session starts", async () => {
