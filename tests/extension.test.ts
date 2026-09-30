@@ -3,6 +3,9 @@ import { describe, expect, it, vi } from "vitest";
 import { SIDEBAR_PANEL_EVENT_CHANNEL } from "../extensions/index.js";
 import { AtelierEditor } from "../src/editor.js";
 
+const mousePress = (x: number, y: number) => `\u001b[<0;${x};${y}M`;
+const mouseRelease = (x: number, y: number) => `\u001b[<0;${x};${y}m`;
+
 import { settleMicrotasks } from "./helpers/async.js";
 import {
 	harness,
@@ -22,8 +25,18 @@ describe("extension registration", () => {
 			{
 				sidebarPanelLayout: [
 					{ id: "vendor:queue", visible: true },
-					...Array.from({ length: 8 }, (_, index) => ({
-						id: ["agent", "activity", "alerts", "todos", "context", "workspace", "usage", "tools"][index],
+					...Array.from({ length: 9 }, (_, index) => ({
+						id: [
+							"agent",
+							"activity",
+							"subagents",
+							"alerts",
+							"todos",
+							"context",
+							"workspace",
+							"usage",
+							"tools",
+						][index],
 						visible: false,
 					})),
 				],
@@ -39,7 +52,7 @@ describe("extension registration", () => {
 				});
 				await command(h, "sidebar on");
 				const rendered = h.overlays.at(-1)?.component.render(44).join("\\n") ?? "";
-				expect(rendered).toContain("QUEUE");
+				expect(rendered).toContain("Queue");
 				expect(rendered).toContain("queued 2");
 			},
 		);
@@ -188,6 +201,28 @@ describe("extension registration", () => {
 			showSidebarToolNames: false,
 		});
 		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Sidebar tool list collapsed", "info");
+	});
+
+	it("toggles tool-name details from a temporary sidebar mouse click", async () => {
+		const h = harness();
+		await start(h);
+		const overlay = h.overlays[0];
+		const lines = overlay?.component.render(44) ?? [];
+		const toolsY = lines.findIndex((line: string) => line.includes("Tools")) + 2;
+		expect(toolsY).toBeGreaterThan(1);
+
+		await h.shortcutHandlers.get("ctrl+shift+r")?.(h.ctx);
+		const sidebarStartX = 120 - 44 + 1;
+		h.terminalInput?.(mousePress(sidebarStartX + 8, toolsY));
+		h.terminalInput?.(mouseRelease(sidebarStartX + 8, toolsY));
+		await Promise.resolve();
+		await Promise.resolve();
+
+		expect(h.saveConfigPatch).toHaveBeenLastCalledWith(expect.stringContaining("pi-atelier.json"), {
+			showSidebarToolNames: true,
+		});
+		expect(overlay?.component.render(44).join("\n")).toContain("read");
+		expect(h.ctx.ui.notify).not.toHaveBeenCalledWith("Sidebar tool list expanded", "info");
 	});
 
 	it.each(["sidebar maybe", "sidebar on extra"])("warns for invalid syntax: %s", async (args) => {
@@ -393,7 +428,7 @@ describe("extension registration", () => {
 				expect(rendered).toContain("vendor:missing");
 
 				// Two display rows, nine segments, and three actions precede configured panels.
-				for (let index = 0; index < 14 + 10; index += 1) workspace?.handleInput("\u001b[B");
+				for (let index = 0; index < 14 + 9; index += 1) workspace?.handleInput("\u001b[B");
 				const focusedRendered = workspace?.render(120).join("\n") ?? "";
 				expect(focusedRendered).toContain("Queue title");
 				expect(focusedRendered).toContain("unavailable");
@@ -414,12 +449,11 @@ describe("extension registration", () => {
 					"vendor:missing",
 					"agent",
 					"activity",
+					"subagents",
 					"alerts",
 					"todos",
-					"context",
-					"workspace",
 					"usage",
-					"subagents",
+					"workspace",
 					"tools",
 					"vendor:queue",
 				]);
@@ -509,7 +543,7 @@ describe("extension registration", () => {
 		await command(h, "sidebar on");
 
 		const text = renderOverlayText(h, 0, 39);
-		expect(text).toMatch(/Enabled\s+4 \/ 5/);
+		expect(text).toMatch(/Enabled.*4 \/ 5/);
 		expect(text).not.toContain("▸");
 		expect(text).not.toContain("bash");
 		expect(text).not.toContain("edit");

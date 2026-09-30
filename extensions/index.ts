@@ -27,6 +27,16 @@ import {
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
 import type { SidebarPanelSetting } from "../src/settings-workspace.js";
 import {
+	createSubagentActivityTracker,
+	SUBAGENT_ASYNC_COMPLETE_EVENT,
+	SUBAGENT_ASYNC_STARTED_EVENT,
+	SUBAGENT_CHILD_STATUS_EVENT,
+	SUBAGENT_CONTROL_EVENT,
+	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
+	SUBAGENT_PROCESS_TERMINAL_EVENT,
+	type SubagentActivityTracker,
+} from "../src/subagent-activity.js";
+import {
 	buildSidebarSnapshot,
 	createSidebarController,
 	type SidebarController,
@@ -64,6 +74,8 @@ export type {
 	SidebarPanelRow,
 	SidebarPanelUnregisterEvent,
 } from "../src/sidebar-panels.js";
+export const PI_ATELIER_SESSION_CONFIG_ENTRY_TYPE = "pi-atelier:config";
+
 export {
 	BUILTIN_SIDEBAR_PANEL_IDS,
 	createSidebarPanelRegistry,
@@ -90,8 +102,12 @@ export {
 	SIDEBAR_PANEL_PROTOCOL_VERSION,
 } from "../src/sidebar-panels.js";
 export type {
+	AtelierColorScheme,
 	BuiltinSidebarPanelId,
+	ColorSchemeBase,
 	ContributedSidebarPanelId,
+	CustomColorScheme,
+	PaletteColorSpec,
 	SidebarPanelId,
 	SidebarPanelLayout,
 	SidebarPanelLayoutEntry,
@@ -112,6 +128,7 @@ interface ActiveSession {
 	readonly sidebar: SidebarController;
 	readonly panelRegistry: SidebarPanelRegistry;
 	readonly runActivity: RunActivityTracker;
+	readonly subagentActivity: SubagentActivityTracker;
 	readonly completionNotifier: CompletionNotifier;
 	readonly retiredState: AtelierState;
 	readonly retiredConfig: AtelierConfig;
@@ -144,6 +161,7 @@ export default function atelierExtension(
 	let shortcutRegistered = false;
 	let resizeShortcutRegistered = false;
 	let lifecycleToken: LifecycleToken = { id: 0 };
+	let sidebarToolNamesSaveQueue: Promise<void> = Promise.resolve();
 	let initializingSessionManager: ExtensionContext["sessionManager"] | undefined;
 
 	/** Retires the current lifecycle and records which initialization, if any, is now in flight. */
@@ -167,6 +185,15 @@ export default function atelierExtension(
 			await saveConfigPatch(path, patch);
 			if (activeSession !== targetSession) throw new Error("Pi Atelier is not active in this session");
 		};
+
+	function readSessionConfig(ctx: ExtensionContext): unknown {
+		let sessionConfig: unknown;
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type === "custom" && entry.customType === PI_ATELIER_SESSION_CONFIG_ENTRY_TYPE)
+				sessionConfig = entry.data;
+		}
+		return sessionConfig;
+	}
 
 	function createOverlayLifetime(token: LifecycleToken, cancellations: Set<() => void>): OverlayLifetime {
 		return {
@@ -263,6 +290,17 @@ export default function atelierExtension(
 		}
 		return allItems.map(normalizeTodo).filter((item): item is NormalizedTodo => item !== undefined);
 	}
+	function restoreSubagentActivity(ctx: ExtensionContext, tracker: SubagentActivityTracker): void {
+		const details: unknown[] = [];
+		for (const entry of ctx.sessionManager.getBranch()) {
+			if (entry.type !== "message") continue;
+			const message = entry.message;
+			if (message.role !== "toolResult" || message.toolName !== "subagent" || message.isError) continue;
+			details.push(message.details);
+		}
+		tracker.reconcileRestoredAsyncToolResults(details);
+	}
+
 	function getSidebarSnapshot(targetSession: ActiveSession): SidebarSnapshot {
 		if (!enabled || targetSession.retired || activeSession !== targetSession) {
 			return buildSidebarSnapshot({
@@ -292,6 +330,7 @@ export default function atelierExtension(
 			activeToolNames: activeTools,
 			extensionStatuses: targetSession.extensionStatuses,
 			runActivity: runActivity.getSnapshot(),
+			subagents: targetSession.subagentActivity.getSnapshot(),
 			todos: targetSession.todos,
 			sidebarPanels: panelRegistry.getAvailable(),
 		});
@@ -313,6 +352,44 @@ export default function atelierExtension(
 		const current = activeSession;
 		return current && contextUsesSessionManager(ctx, current.sessionManager) ? current : undefined;
 	}
+
+	const getCurrentSessionId = (ctx: ExtensionContext): string | undefined => {
+		try {
+			const sessionManager = ctx.sessionManager as ExtensionContext["sessionManager"] & {
+				getSessionId?: () => string;
+			};
+			return sessionManager.getSessionId?.();
+		} catch {
+			return undefined;
+		}
+	};
+
+	const routeSubagentActivityEvent = (
+		handler: (tracker: SubagentActivityTracker, data: unknown) => void,
+		data: unknown,
+	): void => {
+		const current = activeSession;
+		if (!current) return;
+		handler(current.subagentActivity, data);
+	};
+	pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, (data) =>
+		routeSubagentActivityEvent((tracker, event) => tracker.handleAsyncStarted(event), data),
+	);
+	pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, (data) =>
+		routeSubagentActivityEvent((tracker, event) => tracker.handleAsyncComplete(event), data),
+	);
+	pi.events.on(SUBAGENT_FOREGROUND_COMPLETE_EVENT, (data) =>
+		routeSubagentActivityEvent((tracker, event) => tracker.handleForegroundComplete(event), data),
+	);
+	pi.events.on(SUBAGENT_CONTROL_EVENT, (data) =>
+		routeSubagentActivityEvent((tracker, event) => tracker.handleControlEvent(event), data),
+	);
+	pi.events.on(SUBAGENT_CHILD_STATUS_EVENT, (data) =>
+		routeSubagentActivityEvent((tracker, event) => tracker.handleChildStatus(event), data),
+	);
+	pi.events.on(SUBAGENT_PROCESS_TERMINAL_EVENT, (data) =>
+		routeSubagentActivityEvent((tracker, event) => tracker.handleProcessTerminal(event), data),
+	);
 
 	function clearFooter(session: ActiveSession, shouldClear: boolean): void {
 		// Invalidate callbacks before touching Pi so a failed removal cannot leave a live footer.
@@ -363,6 +440,7 @@ export default function atelierExtension(
 		cleanup(() => session.panelRegistry.dispose());
 		cleanup(() => session.runtime.dispose());
 		cleanup(() => session.runActivity.reset());
+		cleanup(() => session.subagentActivity.dispose());
 		cleanup(() => session.completionNotifier.reset());
 		const unsubscribe = session.unsubscribeAskUserBlocked;
 		session.unsubscribeAskUserBlocked = undefined;
@@ -391,18 +469,29 @@ export default function atelierExtension(
 		ctx: ExtensionContext,
 		visible: boolean | undefined,
 		targetSession: ActiveSession,
+		options: { notifySuccess?: boolean } = {},
 	): Promise<void> {
 		const { runtime: targetRuntime } = targetSession;
+		const notifySuccess = options.notifySuccess ?? true;
 		const next = visible ?? !targetRuntime.getConfig().showSidebarToolNames;
 		if (targetRuntime.getConfig().showSidebarToolNames !== next) {
 			targetRuntime.setConfig({ ...targetRuntime.getConfig(), showSidebarToolNames: next });
 		}
 		try {
-			await lifecycleGuardedSavePatch(targetSession)(join(getAgentDir(), "pi-atelier.json"), {
-				showSidebarToolNames: next,
-			});
+			const save = sidebarToolNamesSaveQueue
+				.catch(() => undefined)
+				.then(() =>
+					lifecycleGuardedSavePatch(targetSession)(join(getAgentDir(), "pi-atelier.json"), {
+						showSidebarToolNames: next,
+					}),
+				);
+			sidebarToolNamesSaveQueue = save.then(
+				() => undefined,
+				() => undefined,
+			);
+			await save;
 			if (activeSession !== targetSession) return;
-			ctx.ui.notify(`Sidebar tool list ${next ? "expanded" : "collapsed"}`, "info");
+			if (notifySuccess) ctx.ui.notify(`Sidebar tool list ${next ? "expanded" : "collapsed"}`, "info");
 		} catch (error) {
 			if (activeSession !== targetSession) return;
 			ctx.ui.notify(
@@ -759,6 +848,7 @@ export default function atelierExtension(
 		let localSidebar: SidebarController | undefined;
 		let localPanelRegistry: SidebarPanelRegistry | undefined;
 		let localCompletionNotifier: CompletionNotifier | undefined;
+		let localSubagentActivity: SubagentActivityTracker | undefined;
 		let candidateSession: ActiveSession | undefined;
 		let publishedSession: ActiveSession | undefined;
 		const isFresh = (): boolean => initializationToken === lifecycleToken;
@@ -777,6 +867,7 @@ export default function atelierExtension(
 				userPath,
 				projectPath,
 				projectTrusted: initializationContext.isProjectTrusted(),
+				session: readSessionConfig(initializationContext),
 			});
 			if (!isFresh()) return;
 			for (const warning of loaded.warnings) initializationContext.ui.notify(warning, "warning");
@@ -807,6 +898,12 @@ export default function atelierExtension(
 				instanceId: `atelier-${initializationToken.id}`,
 				onChange: requestCandidateRenders,
 			});
+			const currentSessionId = getCurrentSessionId(initializationContext);
+			localSubagentActivity = createSubagentActivityTracker({
+				...(currentSessionId === undefined ? {} : { currentSessionId }),
+				onChange: requestCandidateRenders,
+			});
+			restoreSubagentActivity(initializationContext, localSubagentActivity);
 			const candidateCompletionNotifier = createCompletionNotifier({
 				isEnabled: () =>
 					enabled &&
@@ -833,6 +930,12 @@ export default function atelierExtension(
 				colorEnabled: !("NO_COLOR" in process.env),
 				shouldAnimate: () =>
 					enabled && activeSession?.token === initializationToken && localRunActivity.isRunning(),
+				onSidebarAction: (action) => {
+					if (action.type !== "toggle-tool-names") return;
+					const current = getActiveSession(initializationContext);
+					if (current)
+						void setSidebarToolNames(initializationContext, undefined, current, { notifySuccess: false });
+				},
 				onWarning: (message) => initializationContext.ui.notify(message, "warning"),
 				onError: (error) =>
 					initializationContext.ui.notify(
@@ -844,6 +947,7 @@ export default function atelierExtension(
 				localSidebar.dispose();
 				localPanelRegistry?.dispose();
 				localRunActivity.reset();
+				localSubagentActivity?.dispose();
 				candidateCompletionNotifier.reset();
 				candidateRuntime.dispose();
 				return;
@@ -857,6 +961,7 @@ export default function atelierExtension(
 				sidebar: localSidebar,
 				panelRegistry: localPanelRegistry,
 				runActivity: localRunActivity,
+				subagentActivity: localSubagentActivity,
 				completionNotifier: candidateCompletionNotifier,
 				retiredState: createInertAtelierState(autoCompact),
 				retiredConfig: structuredClone(loaded.config),
@@ -985,6 +1090,7 @@ export default function atelierExtension(
 		const current = getActiveSession(ctx);
 		if (!enabled || !current) return;
 		current.todos = reconstructTodos(ctx);
+		restoreSubagentActivity(ctx, current.subagentActivity);
 		void current.runtime.refreshSubagentUsage();
 		requestAllRenders(current);
 	});
@@ -1021,12 +1127,19 @@ export default function atelierExtension(
 		getActiveSession(ctx)?.runActivity.finishResponse(event.message.usage.output);
 	});
 	pi.on("tool_execution_start", (event, ctx) => {
-		getActiveSession(ctx)?.runActivity.startTool(enabled ? event : { ...event, args: undefined });
+		const current = getActiveSession(ctx);
+		if (!current) return;
+		current.runActivity.startTool(enabled ? event : { ...event, args: undefined });
+		current.subagentActivity.startForegroundTool(event);
+	});
+	pi.on("tool_execution_update", (event, ctx) => {
+		getActiveSession(ctx)?.subagentActivity.updateForegroundTool(event);
 	});
 	pi.on("tool_execution_end", (event, ctx) => {
 		const current = getActiveSession(ctx);
 		if (!current) return;
 		current.runActivity.finishTool(event);
+		current.subagentActivity.finishForegroundTool(event);
 		current.runtime.scheduleWorkspacePulseRefresh();
 	});
 	// Collapse todo tool output when sidebar shows todos

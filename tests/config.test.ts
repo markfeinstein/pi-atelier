@@ -25,14 +25,45 @@ describe("configuration validation", () => {
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => entry.id)).toEqual([
 			"agent",
 			"activity",
+			"subagents",
 			"alerts",
 			"todos",
-			"context",
-			"workspace",
 			"usage",
-			"subagents",
+			"workspace",
 			"tools",
 		]);
+	});
+
+	it("normalizes working labels and supports disabling them", () => {
+		expect(DEFAULT_CONFIG.workingLabels).toBeUndefined();
+		expect(validateConfig({ workingLabels: false }).config.workingLabels).toBe(false);
+		expect(validateConfig({ workingLabels: [" THINKING ", "WORKING"] }).config.workingLabels).toEqual([
+			"THINKING",
+			"WORKING",
+		]);
+		const invalid = validateConfig({ workingLabels: ["", 5, "THINKING"] });
+		expect(invalid.config.workingLabels).toEqual(["THINKING"]);
+		expect(invalid.warnings).toContain("workingLabels entries must be non-empty strings");
+		expect(validateConfig({ workingLabels: [] }).warnings).toContain(
+			"workingLabels must include at least one non-empty string",
+		);
+	});
+
+	it("validates named and custom color schemes", () => {
+		expect(DEFAULT_CONFIG.colorScheme).toBe("atelier");
+		expect(validateConfig({ colorScheme: "inherit" }).config.colorScheme).toBe("inherit");
+		expect(
+			validateConfig({ colorScheme: { base: "inherit", output: "#cba6f7", cache: 45 } }).config.colorScheme,
+		).toEqual({ base: "inherit", output: "#cba6f7", cache: 45 });
+		const invalid = validateConfig({ colorScheme: { base: "unknown", output: "nope", mystery: 4 } });
+		expect(invalid.config.colorScheme).toBe("atelier");
+		expect(invalid.warnings).toEqual(
+			expect.arrayContaining([
+				"colorScheme.base must be atelier or inherit",
+				"colorScheme.output must be a Pi theme token, #RRGGBB, integer 0-255, or empty string",
+				"Unknown colorScheme role: mystery",
+			]),
+		);
 	});
 
 	it("keeps legacy Sidebar visibility compatible when no authoritative layout is present", () => {
@@ -264,6 +295,29 @@ describe("configuration files", () => {
 		expect(result.config.preset).toBe("custom");
 	});
 
+	it("layers color schemes and working labels across configuration sources", async () => {
+		await writeJson(userPath, {
+			colorScheme: "inherit",
+			workingLabels: ["USER"],
+		});
+		await writeJson(projectPath, {
+			colorScheme: { output: "#ff00ff", cache: 45 },
+			workingLabels: false,
+		});
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { colorScheme: { cache: "syntaxType" }, workingLabels: ["SESSION"] },
+		});
+		expect(result.config.colorScheme).toEqual({
+			base: "inherit",
+			output: "#ff00ff",
+			cache: "syntaxType",
+		});
+		expect(result.config.workingLabels).toEqual(["SESSION"]);
+	});
+
 	it("ignores project and session legacy Sidebar visibility when the user omits it", async () => {
 		await writeJson(projectPath, { showSidebarAgent: false, showSidebarTodos: false });
 		const result = await loadConfig({
@@ -305,5 +359,33 @@ describe("configuration files", () => {
 			futureSetting: "keep",
 			completionNotifications: false,
 		});
+	});
+
+	it("patches a color scheme role without dropping the stored base and roles", async () => {
+		await writeJson(userPath, {
+			colorScheme: { base: "inherit", cache: 45, futureRole: "keep" },
+			futureSetting: "keep",
+		});
+		await saveUserConfigPatch(userPath, { colorScheme: { output: "#ff00ff" } });
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({
+			colorScheme: { base: "inherit", cache: 45, futureRole: "keep", output: "#ff00ff" },
+			futureSetting: "keep",
+		});
+		await saveUserConfigPatch(userPath, { colorScheme: "atelier" });
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({
+			colorScheme: "atelier",
+			futureSetting: "keep",
+		});
+		await saveUserConfigPatch(userPath, { colorScheme: { output: "#ff00ff" } });
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toMatchObject({
+			colorScheme: { base: "atelier", output: "#ff00ff" },
+		});
+		for (const unusable of [42, "solarized"]) {
+			await writeJson(userPath, { colorScheme: unusable });
+			await saveUserConfigPatch(userPath, { colorScheme: { output: "#ff00ff" } });
+			expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({
+				colorScheme: { output: "#ff00ff" },
+			});
+		}
 	});
 });

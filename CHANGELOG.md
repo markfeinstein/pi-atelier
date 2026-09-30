@@ -2,6 +2,12 @@
 
 ## Unreleased
 
+- Port integration-only working labels and configurable Atelier color schemes onto the 0.12.1 display and configuration APIs.
+- Add live subagent lifecycle activity beside the existing cost graph, including restored async results and complete terminal, attention, timeout, detached, paused, and failure states.
+- Refine Sidebar labels and ordering by combining context with Usage and using scan-first Agent and Workspace summaries.
+- Add temporary Sidebar mouse interactions for panel-body and tool-name toggles during Resize mode.
+- Strip CSI, OSC, C1, and single-character terminal escapes from extension statuses before rendering.
+
 ## 0.12.1 — 2026-09-30
 
 - Mark host-provided Pi peers optional so ordinary npm installs do not download a redundant Pi dependency tree. Add a packed-install regression check and dependency audits to the validation gate ([#81](https://github.com/michaelmjhhhh/pi-atelier/issues/81)).

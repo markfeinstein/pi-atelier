@@ -52,9 +52,9 @@ See the [font setup guide and Plain text preview](https://github.com/michaelmjhh
 
 - **Subagent costs:** colored per-child cost curves from pi-subagents accounting events, with matching legends and real observation markers. Open `/atelier` → **Subagent usage** (or `/atelier usage`) for a framed, larger graph, keyboard focus and individual reply costs. Kitty-compatible terminals display smooth native graphics; other terminals use text strokes.
 - **Session visibility:** model, thinking level, context, token usage, cost, and session details in a compact status rail and sidebar.
-- **Live activity:** agent and tool activity, TODOs, response timing, and completion notifications on macOS and Windows.
+- **Live activity:** agent, tool, and subagent lifecycle activity, including queued, running, detached, paused, attention, timeout, completion, and failure states.
 - **Workspace context:** workspace identity and read-only Git status alongside your session.
-- **Personalization:** display presets, configurable segments and panels, optional Nerd Font icons, and model and tool controls.
+- **Personalization:** display presets, configurable segments and panels, working labels, selectable or custom color schemes, optional Nerd Font icons, and model and tool controls.
 
 No telemetry or external network requests. See [Privacy](#privacy).
 
@@ -70,7 +70,9 @@ Open `/atelier` or press **F6** to change display settings, control the sidebar,
 /atelier enable|disable     # set extension state
 ```
 
-The sidebar starts visible and hides when the terminal is too narrow. Press `Ctrl+Shift+R` to resize it. Its TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
+The sidebar starts visible and hides when the terminal is too narrow. Press `Ctrl+Shift+R` to resize it. While Resize mode is active, click a panel crown to collapse or expand its body, or click the Tools disclosure row to toggle tool names. Mouse reporting stops when Resize mode ends, so ordinary terminal selection is unchanged. The TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
+
+The Subagents panel combines the existing cost view with live `pi-subagents` lifecycle activity. It restores current-session async results after reload and keeps terminal runs in the recent list for ten minutes.
 
 Choose a status rail preset in the display settings:
 
@@ -110,11 +112,19 @@ Project settings override user settings. Session changes override both. Global f
   "contextDanger": 90,
   "showSidebarOnStartup": true,
   "showSidebarToolNames": false,
-  "completionNotifications": true
+  "completionNotifications": true,
+  "workingLabels": ["THINKING", "WORKING", "PROCESSING"],
+  "colorScheme": "atelier"
 }
 ```
 
 Use **Settings → Display** to reorder or hide status rail segments and sidebar panels. Undo restores the latest Display or Sidebar edit, including a Display Revert. Legacy user settings `showSidebarAgent` and `showSidebarTodos` remain supported when `sidebarPanelLayout` is absent.
+
+`workingLabels` controls the working-state phrase. Omit it for the built-in phrase set, set it to `false` for a static `WORKING` label, or provide a non-empty string array. One phrase is selected per work cycle and remains stable until that cycle ends.
+
+`colorScheme` accepts `"atelier"`, `"inherit"`, or a custom role map. Custom maps may set `base` to either named scheme and override roles such as `accent`, `working`, `input`, `output`, `cache`, `cost`, `context`, `warning`, `error`, `chartPink`, and `chartGreen`. Values may be Pi theme tokens, `#RRGGBB`, xterm indices from 0 to 255, or an empty string for the terminal default. Custom objects layer role by role across user, trusted-project, and session configuration.
+
+Extension statuses are sanitized before rendering, including CSI, OSC, C1, and single-character terminal escape sequences.
 
 ## Troubleshooting
 

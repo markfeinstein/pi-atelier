@@ -1,6 +1,7 @@
 import type { Component, OverlayHandle, OverlayOptions, TUI } from "@earendil-works/pi-tui";
 import { compositeTuiLine, HStack, isViewportTUI, matchesKey, sliceByColumn } from "@earendil-works/pi-tui";
 import { createImageCompositorBinding } from "./image-compositor.js";
+import { sameSidebarAction, type SidebarAction, type SidebarHitRegion } from "./sidebar-interaction.js";
 
 const ENABLE_MOUSE = "\u001b[?1002h\u001b[?1006h";
 const DISABLE_MOUSE = "\u001b[?1006l\u001b[?1002l";
@@ -86,6 +87,7 @@ export interface SplitPaneControllerOptions {
 	onError?(error: unknown): void;
 	subscribeInput?(handler: (data: string) => { consume?: boolean; data?: string } | undefined): () => void;
 	onResizeChange?(resizing: boolean): void;
+	onSidebarAction?(action: SidebarAction): void;
 	onWarning?(message: string): void;
 }
 
@@ -101,6 +103,7 @@ export interface SplitPaneController {
 	finishResize(): void;
 	cancelResize(): void;
 	isResizing(): boolean;
+	setSidebarHitRegions(regions: readonly SidebarHitRegion[]): void;
 	overlayOptions(): OverlayOptions;
 	requestRender(): void;
 	dispose(): void;
@@ -138,6 +141,8 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 	let resizing = false;
 	let resizeStartWidth = sidebarWidth;
 	let dragging = false;
+	let pendingClickAction: SidebarAction | undefined;
+	let sidebarHitRegions: readonly SidebarHitRegion[] = [];
 	let unsubscribeInput: (() => void) | undefined;
 	let resizeMouseTerminal: TUI["terminal"] | undefined;
 	let fullscreenSidebarComponent: Component | undefined;
@@ -449,6 +454,23 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		return clamp(sidebarWidth, minimumSidebar, Math.min(maximumSidebar, terminalWidth - minimumMain));
 	};
 
+	const hitTestSidebar = (mouse: SgrMouseEvent): SidebarHitRegion | undefined => {
+		if (!tui) return undefined;
+		const effectiveWidth = effectiveSidebarWidth(tui.terminal.columns);
+		if (effectiveWidth <= 0) return undefined;
+		const sidebarStartX = tui.terminal.columns - effectiveWidth + 1;
+		const localX = mouse.x - sidebarStartX + 1;
+		const localY = mouse.y;
+		return sidebarHitRegions.find(
+			(region) =>
+				region.enabled &&
+				localX >= region.x1 &&
+				localX <= region.x2 &&
+				localY >= region.y1 &&
+				localY <= region.y2,
+		);
+	};
+
 	const overlayLayout: OverlayOptions = {
 		anchor: "top-right",
 		width: sidebarWidth,
@@ -530,11 +552,24 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		if (mouse) {
 			if (mouse.release) {
 				if (dragging) stopResize(false);
+				else if (pendingClickAction) {
+					const releasedRegion = hitTestSidebar(mouse);
+					if (sameSidebarAction(pendingClickAction, releasedRegion?.action)) {
+						safely(() => options.onSidebarAction?.(pendingClickAction as SidebarAction));
+						requestRender();
+					}
+					pendingClickAction = undefined;
+				}
 				return { consume: true };
 			}
 			if (!mouse.motion && (mouse.button & 3) === 0 && (mouse.button & 64) === 0) {
 				const dividerX = (tui?.terminal.columns ?? 0) - sidebarWidth + 1;
-				if (Math.abs(mouse.x - dividerX) <= 1) dragging = true;
+				if (Math.abs(mouse.x - dividerX) <= 1) {
+					dragging = true;
+					pendingClickAction = undefined;
+				} else {
+					pendingClickAction = hitTestSidebar(mouse)?.action;
+				}
 				return { consume: true };
 			}
 			if (mouse.motion && dragging && tui) {
@@ -543,6 +578,9 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 				sidebarWidth = clamp(proposed, minimumSidebar, Math.max(minimumSidebar, effectiveMax));
 				syncOverlayWidth();
 				requestRender();
+			} else if (mouse.motion && pendingClickAction) {
+				const currentRegion = hitTestSidebar(mouse);
+				if (!sameSidebarAction(pendingClickAction, currentRegion?.action)) pendingClickAction = undefined;
 			}
 			return { consume: true };
 		}
@@ -636,6 +674,13 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		finishResize: () => stopResize(false),
 		cancelResize: () => stopResize(true),
 		isResizing: () => resizing,
+		setSidebarHitRegions(regions) {
+			sidebarHitRegions = [...regions];
+			if (!pendingClickAction) return;
+			if (!sidebarHitRegions.some((region) => sameSidebarAction(region.action, pendingClickAction))) {
+				pendingClickAction = undefined;
+			}
+		},
 		isEnabled: () => enabled,
 		isVisibleAtWidth: visibleAt,
 		overlayOptions: () => overlayLayout,

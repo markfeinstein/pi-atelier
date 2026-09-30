@@ -794,6 +794,25 @@ describe("footer", () => {
 		expect(oversized).not.toContain("xxxxxxxxxx");
 	});
 
+	it("strips terminal escape sequences from extension statuses", () => {
+		const line = renderFooterLine(
+			{
+				...state,
+				extensionStatuses: [
+					"\u001b[38;2;196;167;231mMCP enabled\u001b[39m",
+					"\u001b]8;;https://example.test\u0007linked\u001b]8;;\u0007",
+				],
+			},
+			DEFAULT_CONFIG,
+			plainTheme,
+			180,
+		);
+		expect(line).toContain("MCP enabled");
+		expect(line).toContain("linked");
+		expect(line).not.toContain("example.test");
+		expect(line).not.toContain("\u001b");
+	});
+
 	it("generates each item at most once for duplicate configured categories", () => {
 		const line = renderFooterLine(
 			state,
@@ -844,6 +863,29 @@ describe("footer", () => {
 			vi.advanceTimersByTime(400);
 			expect(component.render(160)[0]).toContain("PHOTOSYNTHESIZING...");
 			expect(component.render(160)[0]).not.toContain("WORKING");
+		} finally {
+			component.dispose();
+			vi.useRealTimers();
+		}
+	});
+
+	it("does not animate a plain working label", () => {
+		vi.useFakeTimers();
+		const requestRender = vi.fn();
+		const component = createFooterComponent({
+			getState: () => ({ ...state, activity: "working" }),
+			getConfig: () => DEFAULT_CONFIG,
+			requestRender,
+			onBranchChange: () => vi.fn(),
+			theme: plainTheme,
+		});
+
+		try {
+			expect(component.render(160)[0]).toContain("● WORKING");
+			expect(component.render(160)[0]).not.toContain("WORKING...");
+			expect(vi.getTimerCount()).toBe(0);
+			vi.advanceTimersByTime(400);
+			expect(requestRender).not.toHaveBeenCalled();
 		} finally {
 			component.dispose();
 			vi.useRealTimers();
@@ -941,7 +983,8 @@ describe("footer", () => {
 		["working", "WORKING"],
 	] as const)("renders %s with the expected fallback label", (activity, expected) => {
 		const line = renderFooterLine({ ...state, activity }, DEFAULT_CONFIG, plainTheme, 160);
-		expect(line).toContain(activity === "working" ? `${expected}...` : expected);
+		expect(line).toContain(expected);
+		if (activity === "working") expect(line).not.toContain(`${expected}...`);
 	});
 
 	it("keeps the longest working phrase within responsive width limits", () => {

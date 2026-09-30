@@ -13,6 +13,7 @@ import {
 	type RunActivitySnapshot,
 	type ToolActivity,
 } from "./run-activity.js";
+import type { SubagentActivityItem, SubagentActivitySnapshot } from "./subagent-activity.js";
 import {
 	BUILTIN_SIDEBAR_PANEL_IDS,
 	isSidebarPanelContributionId,
@@ -23,6 +24,7 @@ import {
 	type SidebarPanelRole,
 	sanitizeSidebarPanelText,
 } from "./sidebar-panels.js";
+import { type SidebarAction, type SidebarFrame, type SidebarHitRegion } from "./sidebar-interaction.js";
 import { createSplitPaneController, type SplitPaneController } from "./split-pane.js";
 import {
 	DEFAULT_CONFIG,
@@ -82,6 +84,7 @@ export interface SidebarSnapshotInput {
 	activeToolNames?: readonly string[];
 	extensionStatuses: readonly string[];
 	runActivity?: RunActivitySnapshot;
+	subagents?: SubagentActivitySnapshot;
 	todos?: readonly NormalizedTodo[];
 	sidebarPanels?: readonly SidebarPanelData[];
 }
@@ -97,6 +100,7 @@ export interface SidebarSnapshot extends AtelierState {
 	availableToolCount: number;
 	activeToolNames: readonly string[];
 	runActivity: RunActivitySnapshot;
+	subagents: SubagentActivitySnapshot;
 	todos: readonly NormalizedTodo[];
 	sidebarPanels?: readonly SidebarPanelData[];
 }
@@ -123,6 +127,7 @@ export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapsh
 		),
 		extensionStatuses: input.extensionStatuses,
 		runActivity: input.runActivity ?? EMPTY_RUN_ACTIVITY,
+		subagents: input.subagents ?? EMPTY_SUBAGENT_ACTIVITY,
 		todos: input.todos ?? [],
 		sidebarPanels: input.sidebarPanels ?? [],
 	};
@@ -175,6 +180,13 @@ function renderDock(
 	});
 }
 
+function properCase(value: string): string {
+	return value.toLowerCase().replace(/[\p{L}\p{N}]+/gu, (word) => {
+		if (word === "openai") return "OpenAI";
+		return `${word.slice(0, 1).toUpperCase()}${word.slice(1)}`;
+	});
+}
+
 function panelRows(
 	title: string,
 	rows: readonly string[],
@@ -183,10 +195,11 @@ function panelRows(
 	theme: ThemeLike,
 	role: PaletteRole,
 	jewel: "✦" | "✧",
+	collapsed = false,
 ): string[] {
 	const safeWidth = Math.max(4, Math.trunc(width));
 	const innerWidth = Math.max(0, safeWidth - 4);
-	const safeTitle = sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS).toUpperCase();
+	const safeTitle = properCase(sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS));
 	const crownPrefix = `╭─ ${jewel} `;
 	const crownFill = "─".repeat(
 		Math.max(0, safeWidth - visibleWidth(crownPrefix) - visibleWidth(safeTitle) - 2),
@@ -194,6 +207,7 @@ function panelRows(
 	const top = `${palette.paint(role, crownPrefix)}${theme.bold(
 		palette.paint(role, safeTitle),
 	)} ${palette.paint(role, `${crownFill}╮`)}`;
+	if (collapsed) return [top, ""];
 	const body = rows.map((row) => {
 		const content = padToWidth(row, innerWidth);
 		return `${palette.paint("dim", "│")} ${content} ${palette.paint("dim", "│")}`;
@@ -250,30 +264,40 @@ function agentRows(
 	palette: AtelierPalette,
 	theme: ThemeLike,
 ): string[] {
+	const compact = width <= COMPACT_SIDEBAR_MAX_WIDTH - 6;
 	const activity = `${snapshot.activity.slice(0, 1).toUpperCase()}${snapshot.activity.slice(1)}`;
-	const working =
-		snapshot.activity === "working" && snapshot.workingLabel ? ` · ${sanitize(snapshot.workingLabel)}` : "";
-	const knownModel = Boolean(snapshot.modelId || snapshot.provider);
+	const workingLabel =
+		snapshot.activity === "working" && snapshot.workingLabel
+			? sanitize(snapshot.workingLabel).toLowerCase()
+			: "";
+	const activityText = workingLabel ? `${activity} · ${workingLabel}` : activity;
+	const status = theme.bold(
+		palette.paint(snapshot.activity, `${activitySymbol(snapshot.activity)} ${activityText || "—"}`),
+	);
+	const model = valueRow(snapshot.modelId, palette, "primary");
+	const provider = snapshot.provider ? palette.paint("muted", properCase(display(snapshot.provider))) : "";
+	const thinking = snapshot.thinkingLevel
+		? palette.paint("primary", properCase(display(snapshot.thinkingLevel)))
+		: "";
+	const access =
+		snapshot.modelId || snapshot.provider
+			? palette.paint(
+					snapshot.metrics.subscription ? "ready" : "muted",
+					snapshot.metrics.subscription ? "Subscription" : "Metered",
+				)
+			: "";
+	const separator = ` ${palette.paint("dim", "·")} `;
+	if (compact) {
+		const rows = [status, model];
+		if (provider) rows.push(provider);
+		const secondary = [thinking, access].filter(Boolean);
+		if (secondary.length > 0) rows.push(secondary.join(separator));
+		return rows;
+	}
+	const metadata = [provider, thinking, access].filter(Boolean);
 	return [
-		theme.bold(
-			palette.paint(snapshot.activity, `${activitySymbol(snapshot.activity)} ${activity}${working}`),
-		),
-		theme.bold(valueRow(snapshot.modelId, palette, "primary")),
-		valueRow(snapshot.provider, palette, "muted"),
-		labeledRow(
-			"Thinking",
-			display(snapshot.thinkingLevel),
-			width,
-			palette,
-			snapshot.thinkingLevel ? "primary" : "dim",
-		),
-		labeledRow(
-			"Billing",
-			knownModel ? (snapshot.metrics.subscription ? "Subscription" : "Metered") : "—",
-			width,
-			palette,
-			knownModel && snapshot.metrics.subscription ? "ready" : "muted",
-		),
+		spacedRow(status, model, width),
+		metadata.length > 0 ? metadata.join(separator) : palette.paint("dim", "—"),
 	];
 }
 
@@ -289,9 +313,17 @@ interface WorkspacePulseRows {
 	details: string[];
 }
 
+function pulseIndicator(pulse: WorkspacePulseState): { symbol: string; role: PaletteRole } {
+	if (pulse.status === "conflict") return { symbol: "✕", role: "error" };
+	if (pulse.status === "changed") return { symbol: "▲", role: "warning" };
+	if (pulse.status === "stale") return { symbol: "~", role: "warning" };
+	if (pulse.status === "clean") return { symbol: "", role: "ready" };
+	return { symbol: "", role: "dim" };
+}
+
 function workspacePulseRows(
 	pulse: WorkspacePulseState,
-	width: number,
+	compact: boolean,
 	palette: AtelierPalette,
 ): WorkspacePulseRows {
 	if (pulse.status === "inspecting") return { core: [palette.paint("muted", "inspecting…")], details: [] };
@@ -301,45 +333,33 @@ function workspacePulseRows(
 		return { core: [palette.paint("warning", "Git unavailable")], details: [] };
 	if (!("data" in pulse)) return { core: [], details: [] };
 	const git = pulse.data.snapshot;
-	const clean = pulse.status === "clean";
-	const status = clean
-		? "Clean"
-		: pulse.status === "stale"
-			? "Stale"
-			: pulse.status === "conflict"
-				? "Conflicts"
-				: "Modified";
-	const core = [
-		labeledRow(
-			"Git",
-			status,
-			width,
-			palette,
-			pulse.status === "conflict" ? "error" : clean ? "muted" : "warning",
-		),
-	];
-	if (!clean)
-		core.push(
-			labeledRow("Changed", `${formatPulseCount(git.trackedFiles)} tracked`, width, palette),
-			labeledRow(
-				"Lines",
-				`+${formatPulseCount(git.linesAdded)}  −${formatPulseCount(git.linesRemoved)}`,
-				width,
-				palette,
-			),
-		);
-	if (git.conflicts > 0)
-		core.push(labeledRow("Conflicts", formatPulseCount(git.conflicts), width, palette, "error"));
+	if (pulse.status === "clean") return { core: [palette.paint("ready", "✓ clean")], details: [] };
+	const tracked = `${formatPulseCount(git.trackedFiles)} tracked`;
+	const lines = `+${formatPulseCount(git.linesAdded)}  −${formatPulseCount(git.linesRemoved)}`;
+	const role = pulse.status === "stale" ? "warning" : "primary";
+	const prefix = pulse.status === "stale" ? "~ stale · " : "";
+	const core = compact
+		? [palette.paint(role, `${prefix}${tracked}`), palette.paint(role, lines)]
+		: [palette.paint(role, `${prefix}${tracked}  ${lines}`)];
+	if (git.conflicts > 0) core.push(palette.paint("error", `${finiteCount(git.conflicts)} conflicts`));
 	const details = [
-		...(git.untrackedFiles > 0
-			? [labeledRow("Untracked", formatPulseCount(git.untrackedFiles), width, palette)]
-			: []),
-		...(git.binaryFiles > 0 ? [labeledRow("Binary", formatPulseCount(git.binaryFiles), width, palette)] : []),
-		...(git.submodules > 0
-			? [labeledRow("Submodules", formatPulseCount(git.submodules), width, palette)]
-			: []),
-	];
-	return { core, details };
+		git.untrackedFiles > 0
+			? compact
+				? `?${formatPulseCount(git.untrackedFiles)}`
+				: `${formatPulseCount(git.untrackedFiles)} untracked`
+			: "",
+		git.binaryFiles > 0
+			? compact
+				? `bin${formatPulseCount(git.binaryFiles)}`
+				: `${formatPulseCount(git.binaryFiles)} binary`
+			: "",
+		git.submodules > 0
+			? compact
+				? `sub${formatPulseCount(git.submodules)}`
+				: `${formatPulseCount(git.submodules)} submodule`
+			: "",
+	].filter(Boolean);
+	return { core, details: details.length > 0 ? [palette.paint("muted", details.join(" · "))] : [] };
 }
 
 interface WorkspaceRows {
@@ -354,25 +374,31 @@ function workspaceRows(
 	snapshot: SidebarSnapshot,
 	width: number,
 	palette: AtelierPalette,
-	theme: ThemeLike,
+	_theme: ThemeLike,
 ): WorkspaceRows {
-	const identity = [
-		theme.bold(valueRow(snapshot.projectName, palette, "primary")),
-		...(snapshot.branch ? [labeledRow("Branch", display(snapshot.branch), width, palette, "accent")] : []),
-	];
+	const compact = width <= COMPACT_SIDEBAR_MAX_WIDTH - 6;
+	const project = valueRow(snapshot.projectName, palette, "primary");
+	const branch = snapshot.branch ? palette.paint("accent", display(snapshot.branch)) : "";
+	const indicator = pulseIndicator(snapshot.workspacePulse);
+	const gitState = branch && indicator.symbol ? palette.paint(indicator.role, indicator.symbol) : "";
+	const identity = branch ? `${project} ${palette.paint("dim", "·")} ${branch} ${gitState}` : project;
+	const identityRows = compact ? [project, ...(branch ? [`${branch} ${gitState}`] : [])] : [identity];
 	const pulseData = workspacePulseData(snapshot.workspacePulse);
 	const location = pulseData?.relativeCwd
 		? [palette.paint("muted", `./${sanitize(pulseData.relativeCwd)}`)]
 		: pulseData
 			? []
 			: [palette.paint("muted", shortPath(snapshot.cwd))];
-	const pulse = workspacePulseRows(snapshot.workspacePulse, width, palette);
+	const pulse = workspacePulseRows(snapshot.workspacePulse, compact, palette);
+	const sessionName = snapshot.sessionName ? sanitize(snapshot.sessionName) : "";
 	const session = [
-		...(snapshot.sessionName ? [labeledRow("Session", display(snapshot.sessionName), width, palette)] : []),
-		labeledRow("History", `${finiteCount(snapshot.branchEntryCount)} entries`, width, palette),
-		labeledRow("Storage", snapshot.persisted ? "Saved" : "Temporary", width, palette, "muted"),
+		...(sessionName ? [palette.paint("primary", sessionName)] : []),
+		`${palette.paint("primary", `${finiteCount(snapshot.branchEntryCount)} entries`)} ${palette.paint(
+			"dim",
+			"·",
+		)} ${palette.paint(snapshot.persisted ? "ready" : "muted", snapshot.persisted ? "persisted" : "ephemeral")}`,
 	];
-	return { identity, location, pulseCore: pulse.core, pulseDetails: pulse.details, session };
+	return { identity: identityRows, location, pulseCore: pulse.core, pulseDetails: pulse.details, session };
 }
 
 function contextRole(snapshot: SidebarSnapshot, config: AtelierConfig): PaletteRole {
@@ -381,6 +407,15 @@ function contextRole(snapshot: SidebarSnapshot, config: AtelierConfig): PaletteR
 	if (percent >= config.contextDanger) return "error";
 	if (percent >= config.contextWarning) return "warning";
 	return "context";
+}
+
+function spacedRow(left: string, right: string, width: number): string {
+	const safeWidth = Math.max(0, Math.trunc(width));
+	const rightWidth = visibleWidth(right);
+	const leftMax = Math.max(0, safeWidth - rightWidth - 1);
+	const safeLeft = truncateToWidth(left, leftMax, "");
+	const gap = " ".repeat(Math.max(1, safeWidth - visibleWidth(safeLeft) - rightWidth));
+	return truncateToWidth(`${safeLeft}${gap}${right}`, safeWidth, "");
 }
 
 function contextRows(
@@ -592,12 +627,89 @@ interface ActivityGroups {
 interface SidebarGroup {
 	name: string;
 	panel?: string;
+	panelTitle?: string;
 	panelId?: string;
 	panelRole?: PaletteRole;
 	panelJewel?: "✦" | "✧";
 	rows: string[];
+	rowActions?: Array<SidebarAction | undefined>;
 	required: boolean;
 	dropRank: number;
+}
+
+function regionForRow(
+	action: SidebarAction | undefined,
+	width: number,
+	y: number,
+): SidebarHitRegion | undefined {
+	if (!action) return undefined;
+	return { action, x1: 2, x2: width + 2, y1: y, y2: y, enabled: true };
+}
+
+function renderGroupsFrame(
+	groups: readonly SidebarGroup[],
+	width: number,
+	palette: AtelierPalette,
+	theme: ThemeLike,
+	collapsedPanelIds: ReadonlySet<string> = new Set(),
+): { rows: string[]; hitRegions: SidebarHitRegion[] } {
+	const rendered: string[] = [];
+	const hitRegions: SidebarHitRegion[] = [];
+	for (let index = 0; index < groups.length; ) {
+		const group = groups[index];
+		if (!group) break;
+		if (!group.panel) {
+			for (let rowIndex = 0; rowIndex < group.rows.length; rowIndex += 1) {
+				rendered.push(group.rows[rowIndex] ?? "");
+				const region = regionForRow(group.rowActions?.[rowIndex], width, rendered.length);
+				if (region) hitRegions.push(region);
+			}
+			index += 1;
+			continue;
+		}
+
+		const rows: string[] = [];
+		const rowActions: Array<SidebarAction | undefined> = [];
+		let next = index;
+		while (groups[next]?.panel === group.panel && groups[next]?.panelId === group.panelId) {
+			const nextGroup = groups[next];
+			if (nextGroup) {
+				rows.push(...nextGroup.rows);
+				for (let rowIndex = 0; rowIndex < nextGroup.rows.length; rowIndex += 1)
+					rowActions.push(nextGroup.rowActions?.[rowIndex]);
+			}
+			next += 1;
+		}
+		if (rows.length > 0) {
+			const panelStartY = rendered.length + 1;
+			const panelId = group.panelId;
+			const collapsed = panelId !== undefined && collapsedPanelIds.has(panelId);
+			rendered.push(
+				...panelRows(
+					group.panelTitle ?? group.panel,
+					rows,
+					width,
+					palette,
+					theme,
+					group.panelRole ?? "accent",
+					group.panelJewel ?? "✦",
+					collapsed,
+				),
+			);
+			if (panelId && panelId !== "__empty__") {
+				const region = regionForRow({ type: "toggle-panel-body", panelId }, width, panelStartY);
+				if (region) hitRegions.push(region);
+			}
+			if (!collapsed) {
+				for (let rowIndex = 0; rowIndex < rowActions.length; rowIndex += 1) {
+					const region = regionForRow(rowActions[rowIndex], width, panelStartY + 1 + rowIndex);
+					if (region) hitRegions.push(region);
+				}
+			}
+		}
+		index = next;
+	}
+	return { rows: rendered, hitRegions };
 }
 
 function renderGroups(
@@ -605,39 +717,9 @@ function renderGroups(
 	width: number,
 	palette: AtelierPalette,
 	theme: ThemeLike,
+	collapsedPanelIds: ReadonlySet<string> = new Set(),
 ): string[] {
-	const rendered: string[] = [];
-	for (let index = 0; index < groups.length; ) {
-		const group = groups[index];
-		if (!group) break;
-		if (!group.panel) {
-			rendered.push(...group.rows);
-			index += 1;
-			continue;
-		}
-
-		const rows: string[] = [];
-		let next = index;
-		while (groups[next]?.panel === group.panel && groups[next]?.panelId === group.panelId) {
-			rows.push(...(groups[next]?.rows ?? []));
-			next += 1;
-		}
-		if (rows.length > 0) {
-			rendered.push(
-				...panelRows(
-					group.panel,
-					rows,
-					width,
-					palette,
-					theme,
-					group.panelRole ?? "accent",
-					group.panelJewel ?? "✦",
-				),
-			);
-		}
-		index = next;
-	}
-	return rendered;
+	return renderGroupsFrame(groups, width, palette, theme, collapsedPanelIds).rows;
 }
 
 function contributedRows(panel: SidebarPanelData, palette: AtelierPalette): string[] {
@@ -775,6 +857,138 @@ function aggregateActivityText(activity: RunActivitySnapshot): string {
 	return `tools ${completed} done · ${failed} failed`;
 }
 
+const EMPTY_SUBAGENT_ACTIVITY: SubagentActivitySnapshot = Object.freeze({
+	active: Object.freeze([]),
+	recent: Object.freeze([]),
+});
+
+function subagentStatusRole(status: SubagentActivityItem["status"]): PaletteRole {
+	if (status === "failed" || status === "rejected" || status === "stopped") return "error";
+	if (status === "partial" || status === "paused" || status === "stopping" || status === "detached")
+		return "warning";
+	if (status === "running" || status === "queued" || status === "pending") return "working";
+	return "ready";
+}
+
+function subagentItemRole(item: SubagentActivityItem): PaletteRole {
+	if (item.timedOut) return "error";
+	if (item.activityState === "needs_attention") return "warning";
+	return subagentStatusRole(item.status);
+}
+
+function subagentStatusSymbol(status: SubagentActivityItem["status"]): string {
+	if (status === "failed" || status === "rejected" || status === "stopped") return "✕";
+	if (status === "partial") return "◐";
+	if (status === "paused") return "Ⅱ";
+	if (status === "stopping") return "…";
+	if (status === "detached") return "↗";
+	if (status === "queued" || status === "pending") return "◦";
+	if (status === "running") return "◆";
+	return "✓";
+}
+
+function subagentStatusLabel(item: SubagentActivityItem): string {
+	if (item.statusUnavailable) return "status unavailable";
+	if (item.timedOut) return "timed out";
+	if (item.status === "complete") return "done";
+	return item.status;
+}
+
+function subagentName(item: SubagentActivityItem): string {
+	return (
+		sanitize(item.agent ?? (item.agents.length > 0 ? item.agents.join("+") : (item.label ?? item.id))) ||
+		"subagent"
+	);
+}
+
+function subagentRuntime(item: SubagentActivityItem, now: number): string {
+	if (item.durationMs !== undefined) return formatDuration(item.durationMs);
+	const end = item.endedAt ?? now;
+	return formatDuration(Math.max(0, end - item.startedAt));
+}
+
+function subagentRow(
+	item: SubagentActivityItem,
+	contentWidth: number,
+	palette: AtelierPalette,
+	now: number,
+): string {
+	const role = subagentItemRole(item);
+	const name = palette.paint(item.status === "complete" ? "muted" : "primary", subagentName(item));
+	const left = `${palette.paint(role, subagentStatusSymbol(item.status))} ${name}`;
+	const right = palette.paint(role, `${subagentStatusLabel(item)} ${subagentRuntime(item, now)}`);
+	return spacedRow(left, right, contentWidth);
+}
+
+function subagentDetailRow(
+	item: SubagentActivityItem,
+	contentWidth: number,
+	palette: AtelierPalette,
+	now: number,
+): string | undefined {
+	const currentTool = sanitize(item.currentTool ?? "");
+	const currentPath = sanitize(item.currentPath ?? "");
+	const label = sanitize(item.label ?? "");
+	const attention =
+		item.activityState === "needs_attention"
+			? "needs attention"
+			: item.activityState === "active_long_running"
+				? "long-running"
+				: "";
+	const process = item.processState && item.processState !== "observed" ? `process ${item.processState}` : "";
+	const unavailable = item.statusUnavailable ? "status unavailable" : "";
+	const stats = [
+		item.turnCount !== undefined ? `⟳ ${finiteCount(item.turnCount)}` : "",
+		item.toolCount !== undefined ? `tools ${finiteCount(item.toolCount)}` : "",
+	].filter(Boolean);
+	const toolRuntime =
+		item.currentToolStartedAt !== undefined
+			? ` ${formatDuration(Math.max(0, now - item.currentToolStartedAt))}`
+			: "";
+	const detail = attention
+		? [attention, unavailable, currentTool ? `${currentTool}${toolRuntime}` : "", currentPath, process]
+				.filter(Boolean)
+				.join(" · ")
+		: currentTool
+			? [unavailable, currentTool + toolRuntime, currentPath, process].filter(Boolean).join(" · ")
+			: [unavailable, currentPath, process, stats.length > 0 ? stats.join(" · ") : "", label].filter(
+					Boolean,
+				)[0];
+	if (!detail) return undefined;
+	return truncateToWidth(palette.paint("dim", `⎿ ${detail}`), contentWidth, "");
+}
+
+function subagentSidebarGroups(
+	snapshot: SidebarSnapshot,
+	contentWidth: number,
+	palette: AtelierPalette,
+	now: number,
+): SidebarGroup[] {
+	const rows: SidebarGroup[] = [];
+	for (const [index, item] of snapshot.subagents.active.entries()) {
+		const detail = subagentDetailRow(item, contentWidth, palette, now);
+		rows.push({
+			name: `subagentActive:${item.id}`,
+			panel: "SUBAGENTS",
+			panelRole: subagentStatusRole(item.status),
+			rows: [subagentRow(item, contentWidth, palette, now), ...(detail ? [detail] : [])],
+			required: false,
+			dropRank: 65 + (snapshot.subagents.active.length - index) / 100,
+		});
+	}
+	for (const [index, item] of snapshot.subagents.recent.slice(0, 4).entries()) {
+		rows.push({
+			name: `subagentRecent:${item.id}`,
+			panel: "SUBAGENTS",
+			panelRole: subagentStatusRole(item.status),
+			rows: [subagentRow(item, contentWidth, palette, now)],
+			required: false,
+			dropRank: 18 + (4 - index) / 100,
+		});
+	}
+	return rows;
+}
+
 function activitySidebarGroups(
 	snapshot: SidebarSnapshot,
 	contentWidth: number,
@@ -861,7 +1075,7 @@ function composeGroups(groups: readonly SidebarGroup[], height: number): Sidebar
 			const compact = [
 				{ name: "agent", minimum: 2 },
 				{ name: "activityCore", minimum: 1 },
-				{ name: "context", minimum: 1 },
+				{ name: "usageContext", minimum: 1 },
 			].find(({ name, minimum }) =>
 				candidate.some((group) => group.name === name && group.rows.length > minimum),
 			);
@@ -879,7 +1093,12 @@ function composeGroups(groups: readonly SidebarGroup[], height: number): Sidebar
 	return candidate;
 }
 
-export function renderSidebarLines(
+export interface SidebarRenderOptions {
+	collapsedPanelIds?: ReadonlySet<string>;
+	chartGraphics?: SidebarChartGraphics;
+}
+
+export function renderSidebarFrame(
 	snapshot: SidebarSnapshot,
 	config: AtelierConfig,
 	theme: ThemeLike,
@@ -888,15 +1107,17 @@ export function renderSidebarLines(
 	colorEnabled = true,
 	now = Date.now(),
 	resizing = false,
-	chartGraphics: SidebarChartGraphics = {},
-): string[] {
-	const palette = createPalette(theme, colorEnabled);
+	options: SidebarRenderOptions = {},
+): SidebarFrame {
+	const palette = createPalette(theme, colorEnabled, config.colorScheme);
 	const safeWidth = Math.max(0, Math.trunc(width));
 	const safeHeight = Math.max(0, Math.trunc(height));
-	if (safeWidth <= 0 || safeHeight <= 0) return [];
+	if (safeWidth <= 0 || safeHeight <= 0) return { lines: [], hitRegions: [] };
 	const contentWidth = Math.max(0, safeWidth - 2);
 	const panelContentWidth = Math.max(0, contentWidth - 4);
 	const layout = sidebarLayout(safeWidth, config);
+	const collapsedPanelIds = options.collapsedPanelIds ?? new Set<string>();
+	const chartGraphics = options.chartGraphics ?? {};
 	const toolNameRows = layout.showToolNames ? activeToolNameRows(snapshot, panelContentWidth, palette) : [];
 	const workspace = workspaceRows(snapshot, panelContentWidth, palette, theme);
 	const groups: SidebarGroup[] = [
@@ -904,7 +1125,7 @@ export function renderSidebarLines(
 			? [
 					{
 						name: "resize",
-						rows: [palette.paint("warning", "RESIZE · drag divider"), ""],
+						rows: [palette.paint("warning", "Resize · drag divider"), ""],
 						required: true,
 						dropRank: Number.POSITIVE_INFINITY,
 					},
@@ -938,15 +1159,6 @@ export function renderSidebarLines(
 			rows: todosRows(snapshot, palette),
 			required: false,
 			dropRank: 90,
-		},
-		{
-			name: "context",
-			panel: "CONTEXT",
-			panelId: "context",
-			panelRole: contextRole(snapshot, config),
-			rows: contextRows(snapshot, config, panelContentWidth, palette, theme, colorEnabled),
-			required: true,
-			dropRank: Number.POSITIVE_INFINITY,
 		},
 		{
 			name: "workspaceCore",
@@ -994,7 +1206,16 @@ export function renderSidebarLines(
 			dropRank: 4,
 		},
 		{
-			name: "usage",
+			name: "usageContext",
+			panel: "USAGE",
+			panelId: "usage",
+			panelRole: "output",
+			rows: contextRows(snapshot, config, panelContentWidth, palette, theme, colorEnabled),
+			required: true,
+			dropRank: Number.POSITIVE_INFINITY,
+		},
+		{
+			name: "usageMetrics",
 			panel: "USAGE",
 			panelId: "usage",
 			panelRole: "output",
@@ -1009,6 +1230,7 @@ export function renderSidebarLines(
 			panelId: "tools",
 			panelRole: "cache",
 			rows: toolsStatusRows(snapshot, panelContentWidth, palette),
+			rowActions: [safeWidth > COMPACT_SIDEBAR_MAX_WIDTH ? { type: "toggle-tool-names" } : undefined],
 			required: false,
 			dropRank: 10,
 		},
@@ -1052,7 +1274,7 @@ export function renderSidebarLines(
 			const rows = contributedRows(panel, palette);
 			ordered.push({
 				name: `contributed:${panel.id}`,
-				panel: sanitize(panel.title).toUpperCase() || panel.id,
+				panel: properCase(sanitize(panel.title)) || panel.id,
 				panelId: panel.id,
 				panelRole: panel.role ?? "accent",
 				rows: rows.length > 0 ? rows : [palette.paint("dim", "No data")],
@@ -1072,13 +1294,27 @@ export function renderSidebarLines(
 			dropRank: Number.POSITIVE_INFINITY,
 		});
 	}
-	return renderDock(
-		renderGroups(composeGroups(ordered, safeHeight), contentWidth, palette, theme),
-		safeWidth,
-		safeHeight,
-		palette,
-		resizing,
-	);
+	const composed = composeGroups(ordered, safeHeight);
+	const groupFrame = renderGroupsFrame(composed, contentWidth, palette, theme, collapsedPanelIds);
+	return {
+		lines: renderDock(groupFrame.rows, safeWidth, safeHeight, palette, resizing),
+		hitRegions: groupFrame.hitRegions,
+	};
+}
+
+export function renderSidebarLines(
+	snapshot: SidebarSnapshot,
+	config: AtelierConfig,
+	theme: ThemeLike,
+	width: number,
+	height: number,
+	colorEnabled = true,
+	now = Date.now(),
+	resizing = false,
+	options: SidebarRenderOptions = {},
+): string[] {
+	return renderSidebarFrame(snapshot, config, theme, width, height, colorEnabled, now, resizing, options)
+		.lines;
 }
 
 export interface SidebarComponentOptions {
@@ -1087,6 +1323,8 @@ export interface SidebarComponentOptions {
 	getHeight(): number;
 	isResizing?(): boolean;
 	canRenderImages?(): boolean;
+	onFrame?(frame: SidebarFrame): void;
+	getCollapsedPanelIds?(): ReadonlySet<string>;
 	theme: ThemeLike;
 	colorEnabled?: boolean;
 }
@@ -1117,7 +1355,8 @@ export function createSidebarComponent(options: SidebarComponentOptions): Compon
 			let resizing = false;
 			try {
 				resizing = options.isResizing?.() ?? false;
-				return renderSidebarLines(
+				const collapsedPanelIds = options.getCollapsedPanelIds?.();
+				const frame = renderSidebarFrame(
 					options.getSnapshot(),
 					options.getConfig(),
 					options.theme,
@@ -1127,12 +1366,19 @@ export function createSidebarComponent(options: SidebarComponentOptions): Compon
 					Date.now(),
 					resizing,
 					{
-						imageOwner: options.canRenderImages ? imageOwner : undefined,
-						suspendPlot: options.canRenderImages?.() === false,
+						...(collapsedPanelIds ? { collapsedPanelIds } : {}),
+						chartGraphics: {
+							imageOwner: options.canRenderImages ? imageOwner : undefined,
+							suspendPlot: options.canRenderImages?.() === false,
+						},
 					},
 				);
+				options.onFrame?.(frame);
+				return frame.lines;
 			} catch (error) {
-				return renderSidebarError(error, width, height, resizing);
+				const lines = renderSidebarError(error, width, height, resizing);
+				options.onFrame?.({ lines, hitRegions: [] });
+				return lines;
 			}
 		},
 		invalidate() {},
@@ -1155,6 +1401,7 @@ export interface SidebarControllerOptions {
 	ctx: ExtensionContext;
 	getSnapshot(): SidebarSnapshot;
 	getConfig(): AtelierConfig;
+	onSidebarAction?(action: SidebarAction): void;
 	colorEnabled?: boolean;
 	shouldAnimate?(): boolean;
 	animationIntervalMs?: number;
@@ -1235,6 +1482,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 	let requestOverlayRender: (() => void) | undefined;
 	let overlayHandle: OverlayHandle | undefined;
 	let animationTimer: ReturnType<typeof setInterval> | undefined;
+	const collapsedPanelIds = new Set<string>();
 	const animationIntervalMs = Math.max(1, Math.trunc(options.animationIntervalMs ?? 1_000));
 
 	const reportError = (error: unknown) => {
@@ -1259,6 +1507,15 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 		subscribeInput: (handler) => options.ctx.ui.onTerminalInput(handler),
 		onResizeChange: () => {
 			safely(() => requestOverlayRender?.());
+		},
+		onSidebarAction: (action) => {
+			if (action.type === "toggle-panel-body") {
+				if (collapsedPanelIds.has(action.panelId)) collapsedPanelIds.delete(action.panelId);
+				else collapsedPanelIds.add(action.panelId);
+				safely(() => requestOverlayRender?.());
+				return;
+			}
+			options.onSidebarAction?.(action);
 		},
 		...(options.onWarning ? { onWarning: options.onWarning } : {}),
 		...(options.onError ? { onError: options.onError } : {}),
@@ -1296,6 +1553,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 		enabled = false;
 		generation += 1;
 		stopAnimation();
+		split.setSidebarHitRegions([]);
 		safely(split.cancelResize);
 		const close = closeOverlay;
 		const handle = overlayHandle;
@@ -1361,6 +1619,8 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 						getHeight: () => tui.terminal.rows,
 						isResizing: binding.isResizing,
 						canRenderImages: () => !hasCapturingOverlay(tui),
+						onFrame: (frame) => split.setSidebarHitRegions(frame.hitRegions),
+						getCollapsedPanelIds: () => collapsedPanelIds,
 						theme: theme as unknown as ThemeLike,
 						...(options.colorEnabled === undefined ? {} : { colorEnabled: options.colorEnabled }),
 					});

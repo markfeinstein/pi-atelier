@@ -124,10 +124,13 @@ const DROP = {
 	context: Number.POSITIVE_INFINITY,
 } as const;
 
+const TERMINAL_ESCAPE_PATTERN =
+	/(?:\u001b\][^\u0007\u001b]*(?:\u0007|\u001b\\)|\u009d[^\u0007\u009c]*(?:\u0007|\u009c)|(?:\u001b\[|\u009b)[0-?]*[ -/]*[@-~]|\u001b[@-Z\\-_])/g;
+
 const sanitize = (text: string): string =>
 	text
-		.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "")
-		.replace(/[\u0000-\u001f\u007f]/g, " ")
+		.replace(TERMINAL_ESCAPE_PATTERN, "")
+		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
 		.replace(/\s+/g, " ")
 		.trim();
 
@@ -172,9 +175,9 @@ function activityText(
 	nerdFont: boolean,
 ): string {
 	const fallback = state.activity.toUpperCase();
-	const label = state.activity === "working" && !compact ? (state.workingLabel ?? fallback) : fallback;
-	const dots =
-		state.activity === "working" && !compact ? workingDots.padEnd(WORKING_DOT_FRAMES[0].length, " ") : "";
+	const showWorkingLabel = state.activity === "working" && !compact && !!state.workingLabel;
+	const label = showWorkingLabel ? state.workingLabel! : fallback;
+	const dots = showWorkingLabel ? workingDots.padEnd(WORKING_DOT_FRAMES[0].length, " ") : "";
 	return palette.paint(state.activity, theme.bold(`${nerdFont ? "● " : ""}${sanitize(label)}${dots}`));
 }
 
@@ -186,7 +189,7 @@ function buildItems(
 	workingDots: string,
 	symbols: FooterSymbols,
 ): FooterItem[] {
-	const palette = createPalette(theme, colorEnabled);
+	const palette = createPalette(theme, colorEnabled, config.colorScheme);
 	const items: FooterItem[] = [];
 	const itemIds = new Set<FooterItemId>();
 	const compactDensity = config.density === "compact";
@@ -538,7 +541,7 @@ export function renderFooterLine(
 	surface: FooterSurface = "all",
 ): string {
 	if (width <= 0) return "";
-	const palette = createPalette(theme, colorEnabled);
+	const palette = createPalette(theme, colorEnabled, config.colorScheme);
 	const symbols = config.nerdFont ? FOOTER_ICONS : PLAIN_SYMBOLS;
 	let items = buildItems(state, config, theme, colorEnabled, workingDots, symbols);
 	if (surface === "header") items = items.filter((item) => HEADER_ITEMS.has(item.id));
@@ -613,13 +616,14 @@ export function createFooterComponent(options: FooterComponentOptions): AtelierF
 		const line = renderFooterLine(state, config, options.theme, width, colorEnabled, workingDots, surface);
 		const fullActivity = activityText(
 			state,
-			createPalette(options.theme, colorEnabled),
+			createPalette(options.theme, colorEnabled, config.colorScheme),
 			options.theme,
 			workingDots,
 			false,
 			config.nerdFont,
 		);
-		if (surface !== "telemetry") syncAnimation(state.activity === "working" && line.includes(fullActivity));
+		if (surface !== "telemetry")
+			syncAnimation(state.activity === "working" && !!state.workingLabel && line.includes(fullActivity));
 		return line;
 	};
 

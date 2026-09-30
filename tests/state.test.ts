@@ -238,6 +238,22 @@ describe("AtelierRuntime", () => {
 		expect(requestRender).toHaveBeenCalledTimes(2);
 	});
 
+	it("drops the working label when a mid-cycle configuration disables labels", () => {
+		const { runtime } = createRuntime(() => 0.5);
+		runtime.setActivity("working");
+		expect(runtime.getState().workingLabel).toBe("PONDERING");
+		runtime.setConfig({ ...DEFAULT_CONFIG, workingLabels: false });
+		expect(runtime.getState()).toMatchObject({ activity: "working" });
+		expect(runtime.getState().workingLabel).toBeUndefined();
+	});
+
+	it("keeps the selected label stable when a mid-cycle configuration still allows labels", () => {
+		const { runtime } = createRuntime(() => 0.5);
+		runtime.setActivity("working");
+		runtime.setConfig({ ...DEFAULT_CONFIG, workingLabels: ["THINKING"] });
+		expect(runtime.getState().workingLabel).toBe("PONDERING");
+	});
+
 	it("recomputes Session Display patches from retained lower layers with provenance", () => {
 		const requestRender = vi.fn();
 		const runtime = disposeAfterTest(
@@ -321,6 +337,7 @@ describe("AtelierRuntime", () => {
 		runtime.setActivity("working");
 		expect(runtime.getState().workingLabel).toBe("KNEADING");
 		runtime.setActivity("ready");
+		expect(runtime.getState().workingLabel).toBeUndefined();
 		runtime.setActivity("working");
 		runtime.setConfig({ ...DEFAULT_CONFIG, preset: "minimal" });
 

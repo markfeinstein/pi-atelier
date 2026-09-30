@@ -1,5 +1,7 @@
-import type { SubagentUsageSnapshot } from "./subagent-usage.js";
+import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import { applyDisplayTemplate } from "./display.js";
+import type { PaletteRole } from "./palette.js";
+import type { SubagentUsageSnapshot } from "./subagent-usage.js";
 import { DEFAULT_SIDEBAR_PANEL_LAYOUT } from "./sidebar-panels.js";
 import type { WorkspacePulseData } from "./workspace-pulse.js";
 
@@ -20,11 +22,10 @@ export type Density = "comfortable" | "compact";
 export type BuiltinSidebarPanelId =
 	| "agent"
 	| "activity"
+	| "subagents"
 	| "alerts"
 	| "todos"
-	| "context"
 	| "workspace"
-	| "subagents"
 	| "usage"
 	| "tools";
 /** Stable namespaced IDs are used by contributed panels. */
@@ -36,6 +37,13 @@ export interface SidebarPanelLayoutEntry {
 	visible: boolean;
 }
 export type SidebarPanelLayout = SidebarPanelLayoutEntry[];
+export type ColorSchemeBase = "atelier" | "inherit";
+/** A palette role override: Pi theme token, terminal default, #RRGGBB, or xterm index. */
+export type PaletteColorSpec = ThemeColor | "" | `#${string}` | number;
+export type CustomColorScheme = {
+	base?: ColorSchemeBase;
+} & Partial<Record<PaletteRole, PaletteColorSpec>>;
+export type AtelierColorScheme = ColorSchemeBase | CustomColorScheme;
 export type ConfigurationSource = "product" | "user" | "project" | "session";
 export interface TodoItem {
 	id: number;
@@ -113,6 +121,9 @@ export interface AtelierConfig extends DisplaySettings {
 	showSidebarOnStartup: boolean;
 	sidebarPanelLayout: SidebarPanelLayout;
 	completionNotifications: boolean;
+	/** Omitted uses the built-in playful phrases; `false` disables them; a list overrides them. */
+	workingLabels?: readonly string[] | false;
+	colorScheme: AtelierColorScheme;
 }
 
 export interface AtelierMetrics {
@@ -167,4 +178,5 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	showSidebarOnStartup: true,
 	sidebarPanelLayout: DEFAULT_SIDEBAR_PANEL_LAYOUT.map((entry) => ({ ...entry })),
 	completionNotifications: true,
+	colorScheme: "atelier",
 };

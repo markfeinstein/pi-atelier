@@ -120,7 +120,7 @@ describe("extension activity", () => {
 		});
 
 		const sidebarText = renderOverlayText(h, 0, 44);
-		expect(sidebarText).toContain("ACTIVITY");
+		expect(sidebarText).toContain("Activity");
 		expect(sidebarText).toContain("Turn 3");
 		expect(sidebarText).toContain("running");
 		expect(sidebarText).toContain("bash");
@@ -192,7 +192,7 @@ describe("extension activity", () => {
 
 			expect(footerRequestRender).toHaveBeenCalled();
 			expect(footer.render(160).join("\n")).toContain("\uf017 820ms  \uf0e7 ~");
-			expect(renderOverlayText(h)).toMatch(/First token\s+820ms/);
+			expect(renderOverlayText(h)).toMatch(/First token.*820ms/);
 
 			vi.setSystemTime(2_920);
 			await h.dispatch("message_update", {
@@ -201,7 +201,7 @@ describe("extension activity", () => {
 				assistantMessageEvent: { type: "text_delta", delta: "more output" },
 			});
 			expect(footer.render(160).join("\n")).toContain("\uf017 820ms  \uf0e7 ~20.0/s");
-			expect(renderOverlayText(h)).toMatch(/Output speed\s+~20\.0 tok\/s/);
+			expect(renderOverlayText(h)).toMatch(/Output speed.*~20\.0 tok\/s/);
 
 			vi.setSystemTime(4_420);
 			await h.dispatch("message_end", {
@@ -209,7 +209,7 @@ describe("extension activity", () => {
 				message: { role: "assistant", usage: { output: 120 } },
 			});
 			expect(footer.render(160).join("\n")).toContain("\uf017 820ms  \uf0e7 48.0/s");
-			expect(renderOverlayText(h)).toMatch(/Output speed\s+48\.0 tok\/s/);
+			expect(renderOverlayText(h)).toMatch(/Output speed.*48\.0 tok\/s/);
 			workspace.handleInput("\u001b");
 			await opening;
 		} finally {
@@ -383,7 +383,7 @@ describe("extension activity", () => {
 
 		const text = renderOverlayText(h, 0, 44);
 		expect(text).toContain("Working");
-		expect(text).toContain("ACTIVITY");
+		expect(text).toContain("Activity");
 		expect(text).toContain("Turn 1");
 	});
 });
