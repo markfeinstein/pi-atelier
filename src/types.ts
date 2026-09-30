@@ -19,6 +19,7 @@ export type SegmentId =
 	| "statuses"
 	| "menu";
 export type Density = "comfortable" | "compact";
+export type StatusRailPlacement = "footer" | "composer";
 export type BuiltinSidebarPanelId =
 	| "agent"
 	| "activity"
@@ -124,6 +125,7 @@ export interface AtelierConfig extends DisplaySettings {
 	/** Omitted uses the built-in playful phrases; `false` disables them; a list overrides them. */
 	workingLabels?: readonly string[] | false;
 	colorScheme: AtelierColorScheme;
+	statusRailPlacement: StatusRailPlacement;
 }
 
 export interface AtelierMetrics {
@@ -179,4 +181,5 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	sidebarPanelLayout: DEFAULT_SIDEBAR_PANEL_LAYOUT.map((entry) => ({ ...entry })),
 	completionNotifications: true,
 	colorScheme: "atelier",
+	statusRailPlacement: "footer",
 };

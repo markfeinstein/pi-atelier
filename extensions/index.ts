@@ -111,6 +111,7 @@ export type {
 	SidebarPanelId,
 	SidebarPanelLayout,
 	SidebarPanelLayoutEntry,
+	StatusRailPlacement,
 } from "../src/types.js";
 
 export interface AtelierExtensionDependencies {
@@ -665,9 +666,10 @@ export default function atelierExtension(
 					const branch = footerData.getGitBranch();
 					updateExtensionStatuses(currentSession, Array.from(footerData.getExtensionStatuses().values()));
 					const performance = currentSession.runActivity.getSnapshot().performance;
+					const composerPlacement = currentSession.runtime.getConfig().statusRailPlacement === "composer";
 					return {
 						...currentSession.runtime.getState(),
-						workspaceLabel: basename(currentSession.ctx.cwd),
+						...(composerPlacement ? { workspaceLabel: basename(currentSession.ctx.cwd) } : {}),
 						...(branch ? { branch } : {}),
 						...(performance ? { performance } : {}),
 						extensionStatuses: currentSession.extensionStatuses,
@@ -691,7 +693,9 @@ export default function atelierExtension(
 			component.render = (width) => {
 				imageCompositor.sync();
 				// Selectors can temporarily replace the editor without disposing it.
-				const promptVisible = editorInstalled && headerRendered && editor?.statusLineVisible;
+				const composerPlacement = getCurrentSession()?.runtime.getConfig().statusRailPlacement === "composer";
+				const promptVisible =
+					composerPlacement && editorInstalled && headerRendered && editor?.statusLineVisible;
 				headerRendered = false;
 				return promptVisible ? component.renderTelemetry(width) : renderFooter(width);
 			};
@@ -717,8 +721,11 @@ export default function atelierExtension(
 				next.renderStatusLine = (width) => {
 					// Fullscreen Pi crops the top of a tall draft after editor rendering.
 					// Keep essential state in the bottom footer on short terminals.
+					const current = getCurrentSession();
 					const line =
-						getCurrentSession() && tui.terminal.rows >= 12 ? (footer?.renderHeader(width) ?? "") : "";
+						current?.runtime.getConfig().statusRailPlacement === "composer" && tui.terminal.rows >= 12
+							? (footer?.renderHeader(width) ?? "")
+							: "";
 					headerRendered = Boolean(line);
 					return line;
 				};
