@@ -1,6 +1,6 @@
-import { deferred } from "./helpers/async.js";
 import { describe, expect, it, vi } from "vitest";
 import { resolveDisplayLayers } from "../src/config.js";
+import { deferred } from "./helpers/async.js";
 
 const rootMenuItems = vi.hoisted(() => [] as Array<Array<Record<string, unknown>>>);
 vi.mock("@earendil-works/pi-tui", async (importOriginal) => {
@@ -23,8 +23,8 @@ import {
 	renderMenuFrame,
 	type SidebarControls,
 } from "../src/menu.js";
-import { DEFAULT_CONFIG } from "../src/types.js";
 import { getDisplaySettingsViewportHeight } from "../src/settings-workspace.js";
+import { DEFAULT_CONFIG } from "../src/types.js";
 
 function harness() {
 	let config = {
@@ -423,5 +423,90 @@ describe("menu actions", () => {
 		h.actions.setTools(["bash"]);
 		expect(h.pi.setActiveTools).toHaveBeenLastCalledWith(["read"]);
 		expect(h.ctx.ui.notify).toHaveBeenCalledWith(expect.stringContaining("tool failure"), "error");
+	});
+
+	it("preserves the primary failure and reports a failed rollback", () => {
+		const h = harness();
+		h.pi.setActiveTools
+			.mockImplementationOnce(() => {
+				throw new Error("primary tool failure");
+			})
+			.mockImplementationOnce(() => {
+				throw new Error("rollback failure");
+			});
+		h.actions.setTools(["bash"]);
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith(
+			"Could not change tools: primary tool failure; the previous tools could not be restored: rollback failure",
+			"error",
+		);
+	});
+
+	it("formats hostile and terminal-controlled action errors without replacing the primary failure", () => {
+		const h = harness();
+		const hostile = {
+			toString: () => {
+				throw new Error("conversion exploded");
+			},
+		};
+		h.pi.setActiveTools
+			.mockImplementationOnce(() => {
+				throw hostile;
+			})
+			.mockImplementationOnce(() => {
+				throw new Error("\u001b[31mrollback\nfailed\u001b[0m");
+			});
+		h.actions.setTools(["bash"]);
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith(
+			"Could not change tools: Unknown error; the previous tools could not be restored: rollback failed",
+			"error",
+		);
+
+		const nonStringMessage = new Error("placeholder");
+		Object.defineProperty(nonStringMessage, "message", {
+			value: { toString: () => "\u001b[33mprimary\ncontrolled\u001b[0m" },
+		});
+		const second = harness();
+		second.pi.setActiveTools.mockImplementationOnce(() => {
+			throw nonStringMessage;
+		});
+		second.actions.setTools(["bash"]);
+		expect(second.ctx.ui.notify).toHaveBeenCalledWith("Could not change tools: primary controlled", "error");
+	});
+
+	it("sanitizes completion and font persistence failures", async () => {
+		const completion = harness();
+		completion.savePatch.mockRejectedValueOnce(new Error("\u001b[31mdisk\nfull\u001b[0m"));
+		await completion.actions.setCompletionNotifications(false);
+		expect(completion.ctx.ui.notify).toHaveBeenCalledWith(
+			"Completion notifications changed for this session but could not be saved: disk full",
+			"warning",
+		);
+
+		const font = harness();
+		font.savePatch.mockRejectedValueOnce({
+			toString: () => {
+				throw new Error("hostile");
+			},
+		});
+		await font.actions.setNerdFont(false);
+		expect(font.ctx.ui.notify).toHaveBeenCalledWith(
+			"Font mode changed for this session but could not be saved: Unknown error",
+			"warning",
+		);
+	});
+
+	it("preserves a save failure when Sidebar preference rollback also fails", async () => {
+		const h = harness();
+		h.savePatch.mockRejectedValueOnce(new Error("disk full"));
+		h.runtime.setConfig
+			.mockImplementationOnce(() => undefined)
+			.mockImplementationOnce(() => {
+				throw new Error("rollback exploded");
+			});
+		await h.actions.setShowSidebarOnStartup(false);
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith(
+			"Sidebar startup preference could not be saved: disk full; the previous sidebar startup preference could not be restored: rollback exploded",
+			"warning",
+		);
 	});
 });

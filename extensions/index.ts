@@ -16,6 +16,7 @@ import {
 } from "../src/completion-notifier.js";
 import { loadConfig, saveUserConfigPatch } from "../src/config.js";
 import { AtelierEditor } from "../src/editor.js";
+import { formatErrorText } from "../src/error-text.js";
 import { type AtelierFooterComponent, createFooterComponent, type ThemeLike } from "../src/footer.js";
 import { createImageCompositorBinding } from "../src/image-compositor.js";
 import {
@@ -24,18 +25,9 @@ import {
 	openAtelierControlCenter,
 	openDisplaySettingsWorkspace,
 } from "../src/menu.js";
+import { isColorEnabled } from "../src/palette.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
 import type { SidebarPanelSetting } from "../src/settings-workspace.js";
-import {
-	createSubagentActivityTracker,
-	SUBAGENT_ASYNC_COMPLETE_EVENT,
-	SUBAGENT_ASYNC_STARTED_EVENT,
-	SUBAGENT_CHILD_STATUS_EVENT,
-	SUBAGENT_CONTROL_EVENT,
-	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
-	SUBAGENT_PROCESS_TERMINAL_EVENT,
-	type SubagentActivityTracker,
-} from "../src/subagent-activity.js";
 import {
 	buildSidebarSnapshot,
 	createSidebarController,
@@ -49,9 +41,18 @@ import {
 	type SidebarPanelRegistry,
 } from "../src/sidebar-panels.js";
 import { AtelierRuntime, createInertAtelierState } from "../src/state.js";
+import {
+	createSubagentActivityTracker,
+	SUBAGENT_ASYNC_COMPLETE_EVENT,
+	SUBAGENT_ASYNC_STARTED_EVENT,
+	SUBAGENT_CHILD_STATUS_EVENT,
+	SUBAGENT_CONTROL_EVENT,
+	SUBAGENT_FOREGROUND_COMPLETE_EVENT,
+	SUBAGENT_PROCESS_TERMINAL_EVENT,
+	type SubagentActivityTracker,
+} from "../src/subagent-activity.js";
 import { emptySubagentUsage } from "../src/subagent-usage.js";
 import { openSubagentUsage } from "../src/subagent-usage-view.js";
-import { DEFAULT_CONFIG } from "../src/types.js";
 import type {
 	AtelierConfig,
 	AtelierState,
@@ -60,19 +61,33 @@ import type {
 	RpivTask,
 	TodoItem,
 } from "../src/types.js";
+import { DEFAULT_CONFIG } from "../src/types.js";
 
 export type {
+	SidebarBarNode,
+	SidebarBarSegment,
+	SidebarHeadingNode,
+	SidebarKeyValueNode,
+	SidebarPanelAvailability,
 	SidebarPanelContribution,
 	SidebarPanelData,
+	SidebarPanelDescriptor,
 	SidebarPanelDiscoveryEvent,
 	SidebarPanelEvent,
 	SidebarPanelEventTransport,
+	SidebarPanelNode,
 	SidebarPanelRegisterEvent,
 	SidebarPanelRegistry,
 	SidebarPanelRegistryOptions,
+	SidebarPanelRichContent,
 	SidebarPanelRole,
 	SidebarPanelRow,
 	SidebarPanelUnregisterEvent,
+	SidebarProgressNode,
+	SidebarSpacerNode,
+	SidebarSpan,
+	SidebarSpansNode,
+	SidebarTextNode,
 } from "../src/sidebar-panels.js";
 export const PI_ATELIER_SESSION_CONFIG_ENTRY_TYPE = "pi-atelier:config";
 
@@ -94,12 +109,20 @@ export {
 	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_REASON_CHARS,
+	SIDEBAR_PANEL_MAX_RICH_NODES,
+	SIDEBAR_PANEL_MAX_RICH_RAW_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RICH_SEGMENTS,
+	SIDEBAR_PANEL_MAX_RICH_SPANS,
+	SIDEBAR_PANEL_MAX_RICH_UNITS,
+	SIDEBAR_PANEL_MAX_RICH_VISIBLE_CHARS,
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
 	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
 	SIDEBAR_PANEL_MAX_TITLE_CHARS,
 	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
 	SIDEBAR_PANEL_PROTOCOL_VERSION,
+	sanitizeSidebarPanelRich,
 } from "../src/sidebar-panels.js";
 export type {
 	AtelierColorScheme,
@@ -157,12 +180,18 @@ export default function atelierExtension(
 	const _loadConfig = dependencies.loadConfig ?? loadConfig;
 	const saveConfigPatch = dependencies.saveConfigPatch ?? saveUserConfigPatch;
 	const noopRender = (): void => undefined;
+	const attemptCleanup = (action: () => void): void => {
+		try {
+			action();
+		} catch {
+			// Cleanup is best effort: keep releasing later resources and preserve the primary error.
+		}
+	};
 	let activeSession: ActiveSession | undefined;
 	let enabled = true;
 	const registeredMenuShortcuts = new Set<string>();
 	let resizeShortcutRegistered = false;
 	let lifecycleToken: LifecycleToken = { id: 0 };
-	let sidebarToolNamesSaveQueue: Promise<void> = Promise.resolve();
 	let initializingSessionManager: ExtensionContext["sessionManager"] | undefined;
 
 	/** Retires the current lifecycle and records which initialization, if any, is now in flight. */
@@ -181,10 +210,21 @@ export default function atelierExtension(
 	};
 	const lifecycleGuardedSavePatch =
 		(targetSession: ActiveSession): typeof saveUserConfigPatch =>
-		async (path, patch) => {
-			if (activeSession !== targetSession) throw new Error("Pi Atelier is not active in this session");
-			await saveConfigPatch(path, patch);
-			if (activeSession !== targetSession) throw new Error("Pi Atelier is not active in this session");
+		async (path, patch, options = {}) => {
+			const assertActive = (): void => {
+				if (activeSession !== targetSession) throw new Error("Pi Atelier is not active in this session");
+			};
+			assertActive();
+			const guardedOptions = {
+				...options,
+				beforeWrite: async () => {
+					await options.beforeWrite?.();
+					assertActive();
+				},
+			};
+			if (saveConfigPatch === saveUserConfigPatch) await saveConfigPatch(path, patch, guardedOptions);
+			else await saveConfigPatch(path, patch);
+			assertActive();
 		};
 
 	function readSessionConfig(ctx: ExtensionContext): unknown {
@@ -427,25 +467,18 @@ export default function atelierExtension(
 		session.askUserBlocked = false;
 		session.inputRequestSequence = 0;
 		session.requestFooterRender = noopRender;
-		const cleanup = (action: () => void): void => {
-			try {
-				action();
-			} catch {
-				// Teardown must not leak later resources or replace the original failure.
-			}
-		};
 		clearFooter(session, options.clearFooter === true);
-		for (const cancel of Array.from(session.overlayCancellations)) cleanup(cancel);
+		for (const cancel of Array.from(session.overlayCancellations)) attemptCleanup(cancel);
 		session.overlayCancellations.clear();
-		cleanup(() => session.sidebar.dispose());
-		cleanup(() => session.panelRegistry.dispose());
-		cleanup(() => session.runtime.dispose());
-		cleanup(() => session.runActivity.reset());
-		cleanup(() => session.subagentActivity.dispose());
-		cleanup(() => session.completionNotifier.reset());
+		attemptCleanup(() => session.sidebar.dispose());
+		attemptCleanup(() => session.panelRegistry.dispose());
+		attemptCleanup(() => session.runtime.dispose());
+		attemptCleanup(() => session.runActivity.reset());
+		attemptCleanup(() => session.subagentActivity.dispose());
+		attemptCleanup(() => session.completionNotifier.reset());
 		const unsubscribe = session.unsubscribeAskUserBlocked;
 		session.unsubscribeAskUserBlocked = undefined;
-		if (unsubscribe) cleanup(unsubscribe);
+		if (unsubscribe) attemptCleanup(unsubscribe);
 	}
 
 	function teardownActiveSession(ctx?: ExtensionContext): void {
@@ -479,26 +512,15 @@ export default function atelierExtension(
 			targetRuntime.setConfig({ ...targetRuntime.getConfig(), showSidebarToolNames: next });
 		}
 		try {
-			const save = sidebarToolNamesSaveQueue
-				.catch(() => undefined)
-				.then(() =>
-					lifecycleGuardedSavePatch(targetSession)(join(getAgentDir(), "pi-atelier.json"), {
-						showSidebarToolNames: next,
-					}),
-				);
-			sidebarToolNamesSaveQueue = save.then(
-				() => undefined,
-				() => undefined,
-			);
-			await save;
+			await lifecycleGuardedSavePatch(targetSession)(join(getAgentDir(), "pi-atelier.json"), {
+				showSidebarToolNames: next,
+			});
 			if (activeSession !== targetSession) return;
 			if (notifySuccess) ctx.ui.notify(`Sidebar tool list ${next ? "expanded" : "collapsed"}`, "info");
 		} catch (error) {
 			if (activeSession !== targetSession) return;
 			ctx.ui.notify(
-				`Sidebar tool list changed for this session but could not be saved: ${
-					error instanceof Error ? error.message : String(error)
-				}`,
+				`Sidebar tool list changed for this session but could not be saved: ${formatErrorText(error)}`,
 				"warning",
 			);
 		}
@@ -521,7 +543,7 @@ export default function atelierExtension(
 
 	function getSidebarPanelSettings(targetSession: ActiveSession): readonly SidebarPanelSetting[] {
 		const configured = targetSession.runtime.getSidebarPanelLayout();
-		const available = new Map(targetSession.panelRegistry.getAvailable().map((panel) => [panel.id, panel]));
+		const available = new Map(targetSession.panelRegistry.getAll().map((panel) => [panel.id, panel]));
 		const configuredIds = new Set(configured.map((entry) => entry.id));
 		return [
 			...configured.map((entry) => {
@@ -531,8 +553,10 @@ export default function atelierExtension(
 					title: contributed?.title ?? entry.id,
 					available:
 						BUILTIN_SIDEBAR_PANEL_IDS.includes(entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number]) ||
-						contributed !== undefined,
+						contributed?.available === true,
 					visible: entry.visible,
+					...(contributed?.reason ? { reason: contributed.reason } : {}),
+					...(contributed?.rich?.collapsible === true ? { collapsible: true } : {}),
 				};
 			}),
 			...Array.from(available.values())
@@ -540,8 +564,10 @@ export default function atelierExtension(
 				.map((panel) => ({
 					id: panel.id,
 					title: panel.title,
-					available: true,
+					available: panel.available,
 					visible: false,
+					...(panel.reason ? { reason: panel.reason } : {}),
+					...(panel.rich?.collapsible === true ? { collapsible: true } : {}),
 				})),
 		];
 	}
@@ -676,7 +702,7 @@ export default function atelierExtension(
 					};
 				},
 				getConfig: () => getCurrentSession()?.runtime.getConfig() ?? retiredConfig,
-				colorEnabled: !("NO_COLOR" in process.env),
+				colorEnabled: isColorEnabled(),
 				requestRender: footerRequestRender,
 				onBranchChange: (callback) =>
 					footerData.onBranchChange(() => {
@@ -717,7 +743,7 @@ export default function atelierExtension(
 		});
 		try {
 			ctx.ui.setEditorComponent((tui, theme, keybindings) => {
-				const next = new AtelierEditor(tui, theme, keybindings);
+				const next = new AtelierEditor(tui, theme, keybindings, isColorEnabled());
 				next.renderStatusLine = (width) => {
 					// Fullscreen Pi crops the top of a tall draft after editor rendering.
 					// Keep essential state in the bottom footer on short terminals.
@@ -934,7 +960,7 @@ export default function atelierExtension(
 				},
 				getConfig: () =>
 					activeSession?.token === initializationToken ? candidateRuntime.getConfig() : loaded.config,
-				colorEnabled: !("NO_COLOR" in process.env),
+				colorEnabled: isColorEnabled(),
 				shouldAnimate: () =>
 					enabled && activeSession?.token === initializationToken && localRunActivity.isRunning(),
 				onSidebarAction: (action) => {
@@ -951,12 +977,12 @@ export default function atelierExtension(
 					),
 			});
 			if (!isFresh()) {
-				localSidebar.dispose();
-				localPanelRegistry?.dispose();
-				localRunActivity.reset();
-				localSubagentActivity?.dispose();
-				candidateCompletionNotifier.reset();
-				candidateRuntime.dispose();
+				attemptCleanup(() => localSidebar?.dispose());
+				attemptCleanup(() => localPanelRegistry?.dispose());
+				attemptCleanup(() => localRunActivity.reset());
+				attemptCleanup(() => localSubagentActivity?.dispose());
+				attemptCleanup(() => candidateCompletionNotifier.reset());
+				attemptCleanup(() => candidateRuntime.dispose());
 				return;
 			}
 
@@ -1055,13 +1081,6 @@ export default function atelierExtension(
 			}
 			void candidateRuntime.flushWorkspacePulseRefresh();
 		} catch (error) {
-			const cleanup = (action: () => void): void => {
-				try {
-					action();
-				} catch {
-					// Preserve the initialization failure and keep attempting candidate cleanup.
-				}
-			};
 			if (!publishedSession) {
 				// Candidate-local cleanup: this session never became active, so no active-session teardown applies.
 				if (candidateSession) disposeSession(candidateSession);
@@ -1069,12 +1088,14 @@ export default function atelierExtension(
 					const sidebar = localSidebar;
 					const panelRegistry = localPanelRegistry;
 					const completionNotifier = localCompletionNotifier;
+					const subagentActivity = localSubagentActivity;
 					const runtime = localRuntime;
-					if (sidebar) cleanup(() => sidebar.dispose());
-					if (panelRegistry) cleanup(() => panelRegistry.dispose());
-					cleanup(() => localRunActivity.reset());
-					if (completionNotifier) cleanup(() => completionNotifier.reset());
-					if (runtime) cleanup(() => runtime.dispose());
+					if (sidebar) attemptCleanup(() => sidebar.dispose());
+					if (panelRegistry) attemptCleanup(() => panelRegistry.dispose());
+					attemptCleanup(() => localRunActivity.reset());
+					if (subagentActivity) attemptCleanup(() => subagentActivity.dispose());
+					if (completionNotifier) attemptCleanup(() => completionNotifier.reset());
+					if (runtime) attemptCleanup(() => runtime.dispose());
 				}
 				if (!isFresh()) return;
 				initializationContext.ui.notify(

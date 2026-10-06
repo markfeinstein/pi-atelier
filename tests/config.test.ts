@@ -1,10 +1,11 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { loadConfig, saveUserConfigPatch, validateConfig } from "../src/config.js";
 import { DISPLAY_TEMPLATES, PRODUCT_SEGMENT_ORDER } from "../src/display.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
+import { deferred } from "./helpers/async.js";
 
 const visibility = (layout: typeof DEFAULT_CONFIG.segmentLayout, id: string) =>
 	layout.find((entry) => entry.id === id)?.visible;
@@ -265,6 +266,34 @@ describe("configuration files", () => {
 		expect(result.config).toMatchObject(expected);
 	});
 
+	it("loads validated contributed collapse state from the user layer only", async () => {
+		await writeJson(userPath, {
+			contributedPanelCollapsed: {
+				"vendor:queue": true,
+				"vendor:open": false,
+				invalid: true,
+				"vendor:bad": "yes",
+			},
+		});
+		await writeJson(projectPath, { contributedPanelCollapsed: { "project:panel": true } });
+		const result = await loadConfig({
+			userPath,
+			projectPath,
+			projectTrusted: true,
+			session: { contributedPanelCollapsed: { "session:panel": true } },
+		});
+		expect(result.config.contributedPanelCollapsed).toEqual({
+			"vendor:queue": true,
+			"vendor:open": false,
+		});
+		expect(result.warnings).toEqual(
+			expect.arrayContaining([
+				"Ignoring contributedPanelCollapsed entry: invalid",
+				"contributedPanelCollapsed.vendor:bad must be boolean",
+			]),
+		);
+	});
+
 	it("loads an ordered global Sidebar layout with deterministic compatibility precedence", async () => {
 		await writeJson(userPath, {
 			showSidebarAgent: false,
@@ -376,6 +405,97 @@ describe("configuration files", () => {
 		const result = await loadConfig({ userPath, projectPath, projectTrusted: false });
 		expect(result.config).toEqual(DEFAULT_CONFIG);
 		expect(result.warnings).toHaveLength(1);
+	});
+
+	it("serializes overlapping distinct patches without losing either field", async () => {
+		const entered = deferred<void>();
+		const release = deferred<void>();
+		const first = saveUserConfigPatch(
+			userPath,
+			{ completionNotifications: false },
+			{
+				beforeWrite: async () => {
+					entered.resolve();
+					await release.promise;
+				},
+			},
+		);
+		await entered.promise;
+		const second = saveUserConfigPatch(userPath, { showSidebarOnStartup: false });
+		release.resolve();
+		await Promise.all([first, second]);
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toMatchObject({
+			completionNotifications: false,
+			showSidebarOnStartup: false,
+		});
+	});
+
+	it("continues the queue after a failed write guard", async () => {
+		const failed = saveUserConfigPatch(
+			userPath,
+			{ completionNotifications: false },
+			{
+				beforeWrite: () => {
+					throw new Error("stale write");
+				},
+			},
+		);
+		const next = saveUserConfigPatch(userPath, { showSidebarOnStartup: false });
+		await expect(failed).rejects.toThrow("stale write");
+		await next;
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({ showSidebarOnStartup: false });
+	});
+
+	it("prevents publication when a session retires after the temporary write", async () => {
+		await writeJson(userPath, { existing: "keep" });
+		let active = true;
+		await expect(
+			saveUserConfigPatch(
+				userPath,
+				{ completionNotifications: false },
+				{
+					beforeWrite: () => {
+						if (!active) throw new Error("inactive session");
+					},
+					beforePublish: () => {
+						active = false;
+					},
+				},
+			),
+		).rejects.toThrow("inactive session");
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({ existing: "keep" });
+		expect((await readdir(root)).filter((name) => name.includes(".tmp"))).toEqual([]);
+	});
+
+	it("rechecks a queued session immediately before writing", async () => {
+		const entered = deferred<void>();
+		const release = deferred<void>();
+		let active = true;
+		const first = saveUserConfigPatch(
+			userPath,
+			{ completionNotifications: false },
+			{
+				beforeWrite: async () => {
+					entered.resolve();
+					await release.promise;
+				},
+			},
+		);
+		await entered.promise;
+		const stale = saveUserConfigPatch(
+			userPath,
+			{ showSidebarOnStartup: false },
+			{
+				beforeWrite: () => {
+					if (!active) throw new Error("inactive session");
+				},
+			},
+		);
+		active = false;
+		release.resolve();
+		await first;
+		await expect(stale).rejects.toThrow("inactive session");
+		expect(JSON.parse(await readFile(userPath, "utf8"))).toEqual({ completionNotifications: false });
 	});
 
 	it("patches one preference without losing unknown fields", async () => {

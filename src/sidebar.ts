@@ -9,11 +9,11 @@ import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.
 import {
 	EMPTY_RUN_ACTIVITY,
 	formatDuration,
-	responsePerformanceValues,
 	type RunActivitySnapshot,
+	responsePerformanceValues,
 	type ToolActivity,
 } from "./run-activity.js";
-import type { SubagentActivityItem, SubagentActivitySnapshot } from "./subagent-activity.js";
+import { type SidebarAction, type SidebarFrame, type SidebarHitRegion } from "./sidebar-interaction.js";
 import {
 	BUILTIN_SIDEBAR_PANEL_IDS,
 	isSidebarPanelContributionId,
@@ -21,33 +21,47 @@ import {
 	SIDEBAR_PANEL_MAX_ROWS,
 	SIDEBAR_PANEL_MAX_TITLE_CHARS,
 	type SidebarPanelData,
+	type SidebarPanelNode,
 	type SidebarPanelRole,
 	sanitizeSidebarPanelText,
 } from "./sidebar-panels.js";
-import { type SidebarAction, type SidebarFrame, type SidebarHitRegion } from "./sidebar-interaction.js";
 import { createSplitPaneController, type SplitPaneController } from "./split-pane.js";
+import type { SubagentActivityItem, SubagentActivitySnapshot } from "./subagent-activity.js";
+import { subagentCostChart } from "./subagent-cost-chart.js";
 import {
-	DEFAULT_CONFIG,
 	type AtelierConfig,
 	type AtelierState,
+	DEFAULT_CONFIG,
 	type NormalizedTodo,
 	type WorkspacePulseState,
 } from "./types.js";
 import type { WorkspacePulseData } from "./workspace-pulse.js";
-import { subagentCostChart } from "./subagent-cost-chart.js";
 
 export type {
+	SidebarBarNode,
+	SidebarBarSegment,
+	SidebarHeadingNode,
+	SidebarKeyValueNode,
+	SidebarPanelAvailability,
 	SidebarPanelContribution,
 	SidebarPanelData,
+	SidebarPanelDescriptor,
 	SidebarPanelDiscoveryEvent,
 	SidebarPanelEvent,
 	SidebarPanelEventTransport,
+	SidebarPanelNode,
 	SidebarPanelRegisterEvent,
 	SidebarPanelRegistry,
 	SidebarPanelRegistryOptions,
+	SidebarPanelRichContent,
 	SidebarPanelRole,
 	SidebarPanelRow,
 	SidebarPanelUnregisterEvent,
+	SidebarProgressNode,
+	SidebarSpacerNode,
+	SidebarSpan,
+	SidebarSpansNode,
+	SidebarTextNode,
 } from "./sidebar-panels.js";
 export {
 	BUILTIN_SIDEBAR_PANEL_IDS,
@@ -65,11 +79,19 @@ export {
 	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_REASON_CHARS,
+	SIDEBAR_PANEL_MAX_RICH_NODES,
+	SIDEBAR_PANEL_MAX_RICH_RAW_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RICH_SEGMENTS,
+	SIDEBAR_PANEL_MAX_RICH_SPANS,
+	SIDEBAR_PANEL_MAX_RICH_UNITS,
+	SIDEBAR_PANEL_MAX_RICH_VISIBLE_CHARS,
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
 	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
 	SIDEBAR_PANEL_MAX_TITLE_CHARS,
 	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
+	sanitizeSidebarPanelRich,
 	sanitizeSidebarPanelText,
 } from "./sidebar-panels.js";
 
@@ -734,6 +756,88 @@ function contributedRows(panel: SidebarPanelData, palette: AtelierPalette): stri
 	return rows.filter((row) => visibleWidth(row) > 0);
 }
 
+function paintRich(
+	palette: AtelierPalette,
+	color: string | undefined,
+	role: SidebarPanelRole | undefined,
+	fallback: PaletteRole,
+	text: string,
+): string {
+	const painted = color ? palette.paintHex?.(color, text) : undefined;
+	return painted ?? palette.paint(role ?? fallback, text);
+}
+
+function contributedRichNodes(
+	nodes: readonly SidebarPanelNode[],
+	panel: SidebarPanelData,
+	palette: AtelierPalette,
+): string[] {
+	const fallback: PaletteRole = panel.role ?? "primary";
+	return nodes.map((node) => {
+		switch (node.kind) {
+			case "text":
+				return palette.paint(node.role ?? fallback, node.text);
+			case "spans":
+				return node.spans
+					.map((span) => paintRich(palette, span.color, span.role, fallback, span.text))
+					.join("");
+			case "keyValue": {
+				const width = Math.min(16, Math.max(1, visibleWidth(node.label)));
+				const label = padToWidth(palette.paint(node.labelRole ?? "muted", node.label), width);
+				return `${label} ${paintRich(palette, node.valueColor, node.valueRole, fallback, node.value)}`;
+			}
+			case "heading":
+				return palette.paint(node.role ?? "accent", node.text);
+			case "bar": {
+				const barWidth = 20;
+				const total = node.segments.reduce((sum, segment) => sum + segment.value, 0);
+				let used = 0;
+				const blocks: string[] = [];
+				for (const segment of node.segments) {
+					const share =
+						total > 0
+							? Math.min(barWidth - used, Math.max(0, Math.round((segment.value / total) * barWidth)))
+							: 0;
+					if (share <= 0) continue;
+					used += share;
+					blocks.push(paintRich(palette, segment.color, segment.role, fallback, "█".repeat(share)));
+				}
+				const empty = Math.max(0, barWidth - used);
+				const bar = `${blocks.join("")}${empty ? palette.paint("dim", "░".repeat(empty)) : ""}`;
+				return node.label ? `${bar} ${palette.paint("muted", node.label)}` : bar;
+			}
+			case "progress": {
+				const percent =
+					node.total !== undefined && node.total > 0
+						? Math.min(100, Math.round((node.current / node.total) * 100))
+						: undefined;
+				const amount =
+					node.total === undefined
+						? String(node.current)
+						: `${node.current}/${node.total}${percent === undefined ? "" : ` (${percent}%)`}`;
+				const head = `${palette.paint(node.role ?? fallback, node.label)} ${amount}`;
+				return node.detail ? `${head} ${palette.paint("muted", node.detail)}` : head;
+			}
+			case "spacer":
+				return "";
+		}
+	});
+}
+
+function contributedContent(
+	panel: SidebarPanelData,
+	palette: AtelierPalette,
+	config: AtelierConfig,
+): string[] {
+	if (panel.rich) {
+		const collapsed = config.contributedPanelCollapsed[panel.id] === true;
+		const nodes = collapsed && panel.rich.compact ? panel.rich.compact : panel.rich.expanded;
+		const rendered = contributedRichNodes(nodes, panel, palette);
+		if (rendered.some((row) => visibleWidth(row) > 0)) return rendered;
+	}
+	return contributedRows(panel, palette);
+}
+
 function durationForTool(tool: ToolActivity, now: number): string {
 	return formatDuration(tool.durationMs ?? Math.max(0, now - tool.startedAt));
 }
@@ -1271,7 +1375,7 @@ export function renderSidebarFrame(
 			ordered.push(...(grouped.get(entry.id) ?? []));
 		} else if (panel) {
 			availableVisible = true;
-			const rows = contributedRows(panel, palette);
+			const rows = contributedContent(panel, palette, config);
 			ordered.push({
 				name: `contributed:${panel.id}`,
 				panel: properCase(sanitize(panel.title)) || panel.id,

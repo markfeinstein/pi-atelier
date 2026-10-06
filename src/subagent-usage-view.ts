@@ -1,7 +1,7 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-import { openLifecycleOverlay, type OverlayLifetime } from "./overlay-lifecycle.js";
-import { createPalette } from "./palette.js";
+import { type OverlayLifetime, openLifecycleOverlay } from "./overlay-lifecycle.js";
+import { colorAwareTheme, createPalette, isColorEnabled } from "./palette.js";
 import { costLegendColumns, subagentCostChart } from "./subagent-cost-chart.js";
 import type { SubagentUsageSnapshot } from "./subagent-usage.js";
 
@@ -13,7 +13,9 @@ export async function openSubagentUsage(
 ): Promise<void> {
 	await openLifecycleOverlay<void>(
 		ctx,
-		(tui, theme, finish) => {
+		(tui, rawTheme, finish) => {
+			const colorEnabled = isColorEnabled();
+			const theme = colorAwareTheme(rawTheme, colorEnabled);
 			let focused = -1;
 			let pointIndex = -1;
 			let legendPage = 0;
@@ -61,7 +63,7 @@ export async function openSubagentUsage(
 									contentWidth,
 									decimals,
 									true,
-									createPalette(theme, !process.env.NO_COLOR),
+									createPalette(theme, colorEnabled),
 									{
 										height: plotHeight,
 										focusedSeries: activeSeries?.id,

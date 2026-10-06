@@ -108,6 +108,18 @@ export function frameEditorLines(
 
 /** Pi composer with Atelier's rounded frame. Preserves thinking-level borderColor. */
 export class AtelierEditor extends CustomEditor {
+	readonly #colorEnabled: boolean;
+
+	constructor(
+		tui: ConstructorParameters<typeof CustomEditor>[0],
+		theme: ConstructorParameters<typeof CustomEditor>[1],
+		keybindings: ConstructorParameters<typeof CustomEditor>[2],
+		colorEnabled = true,
+	) {
+		super(tui, theme, keybindings);
+		this.#colorEnabled = colorEnabled;
+	}
+
 	/** Optional ANSI status content for the top frame; receives its available column width. */
 	renderStatusLine?: (width: number) => string;
 	private renderedStatusLine = false;
@@ -125,7 +137,7 @@ export class AtelierEditor extends CustomEditor {
 		return frameEditorLines(
 			super.render(safeWidth - EDITOR_FRAME_CHROME),
 			safeWidth,
-			this.borderColor,
+			this.#colorEnabled ? this.borderColor : (text) => text,
 			renderStatusLine
 				? (availableWidth) => {
 						const status = renderStatusLine(availableWidth);

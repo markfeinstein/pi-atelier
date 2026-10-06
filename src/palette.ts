@@ -73,25 +73,6 @@ const LEGACY_UNNAMED_THEME: Record<PaletteRole, ThemeColor> = {
 	menu: "thinkingHigh",
 };
 
-const NO_COLOR: Record<PaletteRole, ThemeColor> = {
-	accent: "accent",
-	primary: "text",
-	muted: "muted",
-	dim: "dim",
-	ready: "text",
-	working: "text",
-	input: "text",
-	output: "text",
-	cache: "text",
-	cost: "text",
-	context: "text",
-	menu: "text",
-	warning: "warning",
-	error: "error",
-	chartPink: "text",
-	chartGreen: "text",
-};
-
 export const PI_THEME_COLOR_TOKENS = [
 	"accent",
 	"border",
@@ -149,6 +130,24 @@ type _MissingPiThemeColorTokens = AssertNever<Exclude<ThemeColor, (typeof PI_THE
 export interface AtelierPalette {
 	readonly colorEnabled?: boolean;
 	paint(role: PaletteRole, text: string): string;
+	/** Paint a validated literal color, or return undefined when color is disabled/invalid. */
+	paintHex?(hex: string, text: string): string | undefined;
+}
+
+/** NO_COLOR disables color only when it is present with a non-empty value. */
+export function isColorEnabled(environment: NodeJS.ProcessEnv = process.env): boolean {
+	return !environment.NO_COLOR;
+}
+
+/** Suppress foreground paint at Atelier-owned direct theme call sites. */
+export function colorAwareTheme<T extends PaletteTheme>(theme: T, colorEnabled: boolean): T {
+	if (colorEnabled) return theme;
+	return new Proxy(theme, {
+		get(target, property, receiver) {
+			if (property === "fg") return (_color: ThemeColor, text: string): string => text;
+			return Reflect.get(target, property, receiver);
+		},
+	});
 }
 
 function rgb([red, green, blue]: Rgb, text: string): string {
@@ -251,9 +250,18 @@ export function createPalette(
 	return {
 		colorEnabled,
 		paint(role, text) {
-			if (!colorEnabled) return themeColor(theme, NO_COLOR[role], text);
+			if (!colorEnabled) return text;
 			const override = overrides.get(role);
 			return override ? paintResolved(theme, override, text) : paintBase(role, text);
+		},
+		paintHex(hex, text) {
+			if (!colorEnabled) return undefined;
+			const parsed = HEX_COLOR.exec(hex);
+			if (!parsed) return undefined;
+			return rgb(
+				[Number.parseInt(parsed[1]!, 16), Number.parseInt(parsed[2]!, 16), Number.parseInt(parsed[3]!, 16)],
+				text,
+			);
 		},
 	};
 }

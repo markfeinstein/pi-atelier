@@ -1,7 +1,7 @@
-import { disposeAfterTest } from "./helpers/cleanup.js";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { AtelierRuntime } from "../src/state.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
+import { disposeAfterTest } from "./helpers/cleanup.js";
 
 afterEach(() => {
 	vi.useRealTimers();
@@ -61,6 +61,35 @@ function createRuntime(
 }
 
 describe("AtelierRuntime", () => {
+	it("releases later subscriptions and becomes inert when an earlier disposer throws", () => {
+		const releases = [
+			vi.fn(() => {
+				throw new Error("first release failed");
+			}),
+			vi.fn(),
+			vi.fn(),
+		];
+		let index = 0;
+		const runtime = new AtelierRuntime({
+			pi: { events: { on: () => releases[index++] } } as never,
+			ctx: {
+				modelRegistry: { isUsingOAuth: vi.fn() },
+				getContextUsage: vi.fn(),
+				isProjectTrusted: vi.fn().mockReturnValue(false),
+				sessionManager: { getEntries: vi.fn().mockReturnValue([]) },
+			} as never,
+			config: DEFAULT_CONFIG,
+			autoCompact: true,
+			requestRender: vi.fn(),
+		});
+		expect(() => runtime.dispose()).toThrow("first release failed");
+		for (const release of releases) expect(release).toHaveBeenCalledOnce();
+		expect(runtime.getState()).toMatchObject({
+			activity: "ready",
+			workspacePulse: { status: "unavailable" },
+		});
+		expect(() => runtime.dispose()).not.toThrow();
+	});
 	it("does no history/context or workspace work when initialized disabled", async () => {
 		vi.useFakeTimers();
 		const inspectWorkspace = vi.fn().mockResolvedValue(cleanInspection);

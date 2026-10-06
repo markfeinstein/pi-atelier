@@ -22,7 +22,7 @@ npm run check
 git diff --check upstream/main...HEAD
 ```
 
-`check` runs strict TypeScript checking, Biome format checking, Vitest, package-content verification, a dependency audit, and a packed-package install check. Registry access is required. The install check verifies that no runtime dependencies are installed and that the extension loads using Pi's host-provided packages. The diff check covers committed changes against updated `main`; also run `git diff --check` for uncommitted edits.
+`check` runs strict TypeScript checking, Biome format checking, Vitest, package-content verification, a dependency audit, and a packed-package install check. Registry access is required. The package checks use the active npm entry point so they work on Windows and accept npm 11/12 pack-report shapes; package verification requires the packed set to exactly match tracked content named by `package.json.files`. The install check verifies that no runtime dependencies are installed and that the extension loads using Pi's host-provided packages. The diff check covers committed changes against updated `main`; also run `git diff --check` for uncommitted edits.
 
 Preserve useful existing tests. For non-TUI behavior changes, add regression coverage through public/runtime seams where practical, or explain the gap. Relevant cases include persisted `false` values and defaults, malformed/error payloads, empty/hidden states, session transitions, and stale events.
 
@@ -66,7 +66,7 @@ The original reports left these checks unfinished; prior PR acceptance and autom
 - [ ] Repeatedly drag the sidebar divider across the 39/40-column compact threshold; verify resize guidance, padding, and clipping.
 - [ ] Hide/reorder panels in Settings; verify order and no blank/orphaned frames.
 - [ ] With TODOs, workspace changes, and live tool activity, check running and settled layouts at small heights. Workspace identity and primary Pulse rows must retain their joint drop behavior.
-- [ ] If contributed panels are available, verify separate frames for equal titles with different IDs, Unicode/ANSI text, and enough panels to force dropping. Use only explicitly selected, nonconflicting fixture extensions in a separate run.
+- [ ] If contributed panels are available, verify separate frames for equal titles with different IDs, Unicode/ANSI text, and enough panels to force dropping. Exercise legacy rows and every rich node type, aggregate-limit rejection, invalid rich fallback, compact/expanded persistence after reload, producer-unavailable reasons in Settings, unregister removal, `NO_COLOR=1` plain output, and true-color fallback. Under `NO_COLOR=1`, also verify the Atelier composer frame is unpainted while host-owned editor content keeps its normal non-foreground styling. Confirm panel mouse actions remain inactive outside Resize mode. Use only explicitly selected, nonconflicting fixture extensions in a separate run.
 - [ ] In a clean repository, verify Workspace Pulse is clean after a Turn; add an untracked file and verify its count with zero tracked line changes.
 - [ ] Edit/stage a tracked file, verify tracked/line counts, then revert and verify clean state returns.
 - [ ] Disable/re-enable Atelier and switch sessions; verify stale workspace data cannot overwrite the active session.

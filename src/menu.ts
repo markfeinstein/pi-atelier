@@ -1,7 +1,7 @@
 import {
-	getSettingsListTheme,
 	type ExtensionAPI,
 	type ExtensionContext,
+	getSettingsListTheme,
 } from "@earendil-works/pi-coding-agent";
 import {
 	Container,
@@ -14,14 +14,16 @@ import {
 	visibleWidth,
 } from "@earendil-works/pi-tui";
 import { saveUserConfigPatch } from "./config.js";
+import { formatErrorText } from "./error-text.js";
+import { type OverlayLifetime, openLifecycleOverlay } from "./overlay-lifecycle.js";
+import { colorAwareTheme, isColorEnabled } from "./palette.js";
 import {
+	createSettingsWorkspace,
 	DISPLAY_SETTINGS_OVERLAY_MARGIN,
 	DISPLAY_SETTINGS_OVERLAY_MAX_HEIGHT,
-	createSettingsWorkspace,
 	getDisplaySettingsViewportHeight,
 	type SidebarPanelSetting,
 } from "./settings-workspace.js";
-import { openLifecycleOverlay, type OverlayLifetime } from "./overlay-lifecycle.js";
 import type { AtelierRuntime } from "./state.js";
 import type { AtelierConfig } from "./types.js";
 
@@ -82,6 +84,29 @@ export function createMenuActions(
 	const notify = (message: string, kind: "info" | "warning" | "error"): void => {
 		if (isActive()) ctx.ui.notify(message, kind);
 	};
+	const boundedError = formatErrorText;
+	type RollbackResult = { restored: true } | { restored: false; error: unknown };
+	const rollbackSuffix = (what: string, result: RollbackResult): string =>
+		result.restored ? "" : `; the previous ${what} could not be restored: ${boundedError(result.error)}`;
+	const reportFailure = (what: string, error: unknown, rollback: RollbackResult): void =>
+		notify(`Could not change ${what}: ${boundedError(error)}${rollbackSuffix(what, rollback)}`, "error");
+	const attemptRestore = (restore: () => void): RollbackResult => {
+		try {
+			restore();
+			return { restored: true };
+		} catch (error) {
+			return { restored: false, error };
+		}
+	};
+	const attemptAsyncRestore = async (restore: () => Promise<boolean>): Promise<RollbackResult> => {
+		try {
+			return (await restore())
+				? { restored: true }
+				: { restored: false, error: new Error("restore rejected") };
+		} catch (error) {
+			return { restored: false, error };
+		}
+	};
 	return {
 		async selectModel(model: Parameters<ExtensionAPI["setModel"]>[0]): Promise<void> {
 			if (!isActive()) return;
@@ -95,12 +120,10 @@ export function createMenuActions(
 				runtime.refreshUsage();
 			} catch (error) {
 				if (!isActive()) return;
-				if (previous) {
-					try {
-						await pi.setModel(previous);
-					} catch {}
-				}
-				notify(`Could not change model: ${error instanceof Error ? error.message : String(error)}`, "error");
+				const rollback = previous
+					? await attemptAsyncRestore(() => pi.setModel(previous))
+					: ({ restored: true } as const);
+				reportFailure("model", error, rollback);
 			}
 		},
 		setThinkingLevel(level: Parameters<ExtensionAPI["setThinkingLevel"]>[0]): void {
@@ -112,12 +135,10 @@ export function createMenuActions(
 				runtime.refreshUsage();
 			} catch (error) {
 				if (!isActive()) return;
-				try {
-					pi.setThinkingLevel(previous);
-				} catch {}
-				notify(
-					`Could not change thinking level: ${error instanceof Error ? error.message : String(error)}`,
-					"error",
+				reportFailure(
+					"thinking level",
+					error,
+					attemptRestore(() => pi.setThinkingLevel(previous)),
 				);
 			}
 		},
@@ -129,10 +150,11 @@ export function createMenuActions(
 				pi.setActiveTools([...new Set(names.filter((name) => known.has(name)))]);
 			} catch (error) {
 				if (!isActive()) return;
-				try {
-					pi.setActiveTools(previous);
-				} catch {}
-				notify(`Could not change tools: ${error instanceof Error ? error.message : String(error)}`, "error");
+				reportFailure(
+					"tools",
+					error,
+					attemptRestore(() => pi.setActiveTools(previous)),
+				);
 			}
 		},
 		async setShowSidebarOnStartup(enabled: boolean): Promise<void> {
@@ -145,11 +167,9 @@ export function createMenuActions(
 				notify(`Sidebar will start ${enabled ? "shown" : "hidden"}`, "info");
 			} catch (error) {
 				if (!isActive()) return;
-				runtime.setConfig(previous);
+				const rollback = attemptRestore(() => runtime.setConfig(previous));
 				notify(
-					`Sidebar startup preference could not be saved: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
+					`Sidebar startup preference could not be saved: ${boundedError(error)}${rollbackSuffix("sidebar startup preference", rollback)}`,
 					"warning",
 				);
 			}
@@ -164,9 +184,7 @@ export function createMenuActions(
 			} catch (error) {
 				if (!isActive()) return;
 				notify(
-					`Completion notifications changed for this session but could not be saved: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
+					`Completion notifications changed for this session but could not be saved: ${boundedError(error)}`,
 					"warning",
 				);
 			}
@@ -181,9 +199,7 @@ export function createMenuActions(
 			} catch (error) {
 				if (!isActive()) return;
 				notify(
-					`Font mode changed for this session but could not be saved: ${
-						error instanceof Error ? error.message : String(error)
-					}`,
+					`Font mode changed for this session but could not be saved: ${boundedError(error)}`,
 					"warning",
 				);
 			}
@@ -199,7 +215,8 @@ async function showSelection(
 ): Promise<string | undefined> {
 	return openLifecycleOverlay<string>(
 		ctx,
-		(tui, theme, finish) => {
+		(tui, rawTheme, finish) => {
+			const theme = colorAwareTheme(rawTheme, isColorEnabled());
 			const container = new Container();
 			container.addChild(new Text(theme.fg("accent", theme.bold(title)), 1, 0));
 			const list = new SelectList(items, Math.min(items.length, 12), {
@@ -243,10 +260,19 @@ async function showToolSettings(
 				currentValue: enabled.has(tool.name) ? "enabled" : "disabled",
 				values: ["enabled", "disabled"],
 			}));
+			const settingsTheme = isColorEnabled()
+				? getSettingsListTheme()
+				: {
+						label: (text: string) => text,
+						value: (text: string) => text,
+						description: (text: string) => text,
+						cursor: "→ ",
+						hint: (text: string) => text,
+					};
 			const list = new SettingsList(
 				items,
 				Math.min(items.length + 2, 16),
-				getSettingsListTheme(),
+				settingsTheme,
 				(id, value) => {
 					if (!isOverlayLifetimeActive(lifetime)) return;
 					if (value === "enabled") enabled.add(id);
@@ -299,7 +325,9 @@ export async function openDisplaySettingsWorkspace(
 	}
 	await openLifecycleOverlay<void>(
 		ctx,
-		(tui, theme, finish) => {
+		(tui, rawTheme, finish) => {
+			const colorEnabled = isColorEnabled();
+			const theme = colorAwareTheme(rawTheme, colorEnabled);
 			const ensureActive = (): void => {
 				if (!isOverlayLifetimeActive(lifetime)) throw new Error("Pi Atelier is not active in this session");
 			};
@@ -325,7 +353,7 @@ export async function openDisplaySettingsWorkspace(
 				getRenderConfig: () => runtime.getConfig(),
 				getViewportHeight: () => getDisplaySettingsViewportHeight(tui.terminal.rows),
 				theme,
-				colorEnabled: !("NO_COLOR" in process.env),
+				colorEnabled,
 				requestWorkspaceRender: () => {
 					if (isOverlayLifetimeActive(lifetime)) tui.requestRender();
 				},

@@ -1188,22 +1188,23 @@ describe("sidebar snapshot and layout", () => {
 		expect(lines.every((line) => visibleWidth(line) <= 34)).toBe(true);
 	});
 
-	it.each([
-		[50, "text"],
-		[75, "warning"],
-		[95, "error"],
-	] as const)("uses the configured context role at %s%%", (percent, expectedRole) => {
-		const fg = vi.fn((_color: string, text: string) => text);
-		renderSidebarLines(
-			{ ...snapshot(), metrics: { ...state.metrics, contextPercent: percent } },
-			DEFAULT_CONFIG,
-			{ ...theme, fg },
-			44,
-			36,
-			false,
-		);
-		expect(fg).toHaveBeenCalledWith(expectedRole, expect.stringContaining(`${percent.toFixed(1)}%`));
-	});
+	it.each([50, 75, 95] as const)(
+		"renders context at %s%% without foreground paint when disabled",
+		(percent) => {
+			const fg = vi.fn((_color: string, text: string) => text);
+			const lines = renderSidebarLines(
+				{ ...snapshot(), metrics: { ...state.metrics, contextPercent: percent } },
+				DEFAULT_CONFIG,
+				{ ...theme, fg },
+				44,
+				36,
+				false,
+			);
+			expect(lines.join("\n")).toContain(`${percent.toFixed(1)}%`);
+			expect(fg).not.toHaveBeenCalled();
+			expect(lines.join("\n")).not.toMatch(/\u001b\[[0-?]*[ -/]*[@-~]/);
+		},
+	);
 
 	it("hides Agent while retaining every populated sibling panel", () => {
 		const configWithoutAgent = {

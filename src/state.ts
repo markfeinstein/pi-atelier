@@ -7,8 +7,8 @@ import {
 	emptySubagentUsage,
 	isSubagentUsageEventForSession,
 	readSubagentUsage,
-	subagentMetadataReferences,
 	SUBAGENT_METADATA_ENTRY,
+	subagentMetadataReferences,
 } from "./subagent-usage.js";
 import type {
 	ActivityState,
@@ -132,7 +132,15 @@ export class AtelierRuntime {
 				}),
 		);
 		this.#subagentUnsubscribe = () => {
-			for (const off of unsubscribe) off?.();
+			let failure: unknown;
+			for (const off of unsubscribe) {
+				try {
+					off?.();
+				} catch (error) {
+					failure ??= error;
+				}
+			}
+			if (failure) throw failure;
 		};
 	}
 
@@ -265,6 +273,12 @@ export class AtelierRuntime {
 		if (patch.sidebarPanelLayout) {
 			const sidebarPanelLayout = patch.sidebarPanelLayout.map((entry) => ({ ...entry }));
 			this.#config = { ...this.#config, sidebarPanelLayout };
+		}
+		if (patch.contributedPanelCollapsed) {
+			this.#config = {
+				...this.#config,
+				contributedPanelCollapsed: { ...patch.contributedPanelCollapsed },
+			};
 		}
 		const target = resolveDisplayLayers(this.#displayLayers).display;
 		let session = { ...this.#displayLayers.session };
@@ -433,14 +447,35 @@ export class AtelierRuntime {
 	 * `setFooter(undefined)` cannot keep reporting the retired session's branch, usage, or activity.
 	 */
 	dispose(): void {
+		if (this.#disposed) return;
 		this.#disposed = true;
-		this.#subagentAbort.abort();
-		clearTimeout(this.#subagentRefreshTimer);
+		this.#enabled = false;
+		const abort = this.#subagentAbort;
+		this.#subagentAbort = new AbortController();
+		const timer = this.#subagentRefreshTimer;
 		this.#subagentRefreshTimer = undefined;
-		this.#subagentUnsubscribe?.();
-		this.#workspacePulseRefresh.dispose();
+		const unsubscribe = this.#subagentUnsubscribe;
+		this.#subagentUnsubscribe = undefined;
+		this.#subagentRefresh = undefined;
+		this.#subagentDirty = false;
+		this.#subagentEntries = [];
 		this.#lastWorkspaceData = undefined;
 		this.#state = { ...this.#inertState(), workspacePulse: { status: "unavailable" } };
+
+		let failure: unknown;
+		for (const release of [
+			() => abort.abort(),
+			() => clearTimeout(timer),
+			() => unsubscribe?.(),
+			() => this.#workspacePulseRefresh.dispose(),
+		]) {
+			try {
+				release();
+			} catch (error) {
+				failure ??= error;
+			}
+		}
+		if (failure) throw failure;
 	}
 
 	#replaceState(next: AtelierState): void {
