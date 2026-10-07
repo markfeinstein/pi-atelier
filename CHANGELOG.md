@@ -9,6 +9,11 @@
 - Refine Sidebar labels and ordering by combining context with Usage and using scan-first Agent and Workspace summaries.
 - Add temporary Sidebar mouse interactions for panel-body and tool-name toggles during Resize mode.
 - Strip CSI, OSC, C1, and single-character terminal escapes from extension statuses before rendering.
+- Run packed-package checks reliably on Windows and npm 12, and require the packed file set to exactly match tracked `package.json.files` content.
+- Serialize global configuration patches with fresh reads and collision-safe publication, preventing simultaneous preferences or retired sessions from overwriting newer changes.
+- Align `NO_COLOR` with standard non-empty-value semantics and suppress Atelier-authored foreground painting; report bounded, terminal-safe persistence and rollback error details while preserving primary failures, and make cleanup attempt every owned resource before surfacing release errors.
+- Add aggregate-bounded, presentation-only rich primitives and producer availability descriptors for local event-bus sidebar contributors while keeping protocol-v1 rows as fallback; unavailable registered panels remain identifiable in Settings but do not render.
+- Persist rich contributed-panel compact/expanded state as a validated global user preference, with changes available from the Display workspace.
 
 ## 0.12.1 — 2026-09-30
 

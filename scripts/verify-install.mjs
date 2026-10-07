@@ -1,26 +1,15 @@
 import assert from "node:assert/strict";
-import { spawnSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { npm, npmPackReport } from "./npm-run.mjs";
 
 const repoDir = fileURLToPath(new URL("..", import.meta.url));
 const tempDir = mkdtempSync(join(tmpdir(), "pi-atelier-install-"));
 
-function npm(args, cwd) {
-	const result = spawnSync("npm", args, { cwd, encoding: "utf8" });
-	if (result.error) throw result.error;
-	if (result.status !== 0) {
-		throw new Error(
-			`npm ${args.join(" ")} failed (${result.signal ?? result.status})\n${result.stdout}${result.stderr}`,
-		);
-	}
-	return result.stdout;
-}
-
 try {
-	const [packed] = JSON.parse(npm(["pack", "--json", "--pack-destination", tempDir], repoDir));
+	const packed = npmPackReport(["--pack-destination", tempDir], { cwd: repoDir });
 	const consumerDir = join(tempDir, "consumer");
 	mkdirSync(consumerDir);
 	writeFileSync(
@@ -29,7 +18,7 @@ try {
 	);
 	npm(
 		["install", "--legacy-peer-deps=false", "--include=peer", "--no-fund", join(tempDir, packed.filename)],
-		consumerDir,
+		{ cwd: consumerDir },
 	);
 	const lock = JSON.parse(readFileSync(join(consumerDir, "package-lock.json"), "utf8"));
 	const unexpected = Object.keys(lock.packages).filter(
@@ -41,9 +30,10 @@ try {
 		`Installation pulled in ${unexpected.length} unexpected dependencies: ${unexpected.slice(0, 10).join(", ")}`,
 	);
 	assert.ok(lock.packages["node_modules/pi-atelier"], "Packed pi-atelier was not installed");
-	npm(["audit", "--audit-level=low"], consumerDir);
+	npm(["audit", "--audit-level=low"], { cwd: consumerDir });
 
 	process.env.PI_CODING_AGENT_DIR = join(tempDir, "agent");
+	// Pi's package index does not export the loader; this deep import may need updating on Pi upgrades.
 	const { loadExtensions } = await import(
 		"../node_modules/@earendil-works/pi-coding-agent/dist/core/extensions/loader.js"
 	);

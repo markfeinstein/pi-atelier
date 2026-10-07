@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
@@ -10,12 +11,17 @@ import {
 } from "./display.js";
 import { normalizePaletteColorSpec, PALETTE_ROLES } from "./palette.js";
 import {
-	DEFAULT_CONFIG,
+	DEFAULT_SIDEBAR_PANEL_LAYOUT,
+	isSidebarPanelContributionId,
+	normalizeSidebarPanelLayout,
+} from "./sidebar-panels.js";
+import {
 	type AtelierColorScheme,
 	type AtelierConfig,
 	type ColorSchemeBase,
 	type ConfigurationSource,
 	type CustomColorScheme,
+	DEFAULT_CONFIG,
 	type DisplayLayerState,
 	type DisplayProvenance,
 	type DisplaySettings,
@@ -26,7 +32,6 @@ import {
 	type StatusRailPlacement,
 	type TemplateName,
 } from "./types.js";
-import { DEFAULT_SIDEBAR_PANEL_LAYOUT, normalizeSidebarPanelLayout } from "./sidebar-panels.js";
 
 export interface ConfigLoadResult {
 	config: AtelierConfig;
@@ -44,6 +49,7 @@ export interface LoadConfigOptions {
 
 interface SidebarResolution {
 	layout: AtelierConfig["sidebarPanelLayout"];
+	collapsed: AtelierConfig["contributedPanelCollapsed"];
 	warnings: string[];
 }
 
@@ -79,6 +85,32 @@ function parseSidebarLayout(
 	return normalizeSidebarPanelLayout(entries, warnings);
 }
 
+function resolveSidebarCollapse(
+	user: Record<string, unknown> | undefined,
+	base: AtelierConfig,
+	warnings: string[],
+): AtelierConfig["contributedPanelCollapsed"] {
+	if (!user || !("contributedPanelCollapsed" in user)) return { ...base.contributedPanelCollapsed };
+	const parsed = user.contributedPanelCollapsed;
+	if (!isRecord(parsed)) {
+		warnings.push("contributedPanelCollapsed must be an object");
+		return { ...base.contributedPanelCollapsed };
+	}
+	const collapsed: AtelierConfig["contributedPanelCollapsed"] = {};
+	for (const [id, flag] of Object.entries(parsed)) {
+		if (!isSidebarPanelContributionId(id)) {
+			warnings.push(`Ignoring contributedPanelCollapsed entry: ${id}`);
+			continue;
+		}
+		if (typeof flag !== "boolean") {
+			warnings.push(`contributedPanelCollapsed.${id} must be boolean`);
+			continue;
+		}
+		collapsed[id] = flag;
+	}
+	return collapsed;
+}
+
 function setSidebarVisibility(
 	layout: AtelierConfig["sidebarPanelLayout"],
 	id: "agent" | "todos",
@@ -94,10 +126,12 @@ function resolveSidebarLayout(
 ): SidebarResolution {
 	const warnings: string[] = [];
 	const user = layers.user;
+	const collapsed = resolveSidebarCollapse(user, base, warnings);
 	if (user && "sidebarPanelLayout" in user) {
 		const parsed = parseSidebarLayout(user.sidebarPanelLayout, warnings);
 		return {
 			layout: parsed ?? cloneSidebarLayout(base.sidebarPanelLayout),
+			collapsed,
 			warnings,
 		};
 	}
@@ -108,7 +142,7 @@ function resolveSidebarLayout(
 		setSidebarVisibility(layout, "agent", user.showSidebarAgent);
 	if (user && typeof user.showSidebarTodos === "boolean")
 		setSidebarVisibility(layout, "todos", user.showSidebarTodos);
-	return { layout, warnings };
+	return { layout, collapsed, warnings };
 }
 
 const presets = new Set<PresetName>(["editorial", "minimal", "classic", "custom"]);
@@ -129,6 +163,7 @@ const cloneConfig = (config: AtelierConfig): AtelierConfig => ({
 	colorScheme: cloneColorScheme(config.colorScheme),
 	segmentLayout: config.segmentLayout.map((entry) => ({ ...entry })),
 	sidebarPanelLayout: cloneSidebarLayout(config.sidebarPanelLayout),
+	contributedPanelCollapsed: { ...config.contributedPanelCollapsed },
 	...(Array.isArray(config.workingLabels) ? { workingLabels: [...config.workingLabels] } : {}),
 });
 
@@ -492,7 +527,10 @@ function resolveConfig(
 	}
 	const resolved = resolveDisplayLayers(displayLayers, base);
 	const sidebar = resolveSidebarLayout(displayLayers, base);
-	Object.assign(config, resolved.display, { sidebarPanelLayout: sidebar.layout });
+	Object.assign(config, resolved.display, {
+		sidebarPanelLayout: sidebar.layout,
+		contributedPanelCollapsed: sidebar.collapsed,
+	});
 	return {
 		config,
 		warnings: [...new Set([...warnings, ...resolved.warnings, ...sidebar.warnings])],
@@ -528,27 +566,64 @@ export async function loadConfig(options: LoadConfigOptions): Promise<ConfigLoad
 	};
 }
 
-export async function saveUserConfigPatch(path: string, patch: Partial<AtelierConfig>): Promise<void> {
-	let current: Record<string, unknown> = {};
-	try {
-		const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
-		if (!isRecord(parsed)) throw new Error("User configuration must be a JSON object");
-		current = parsed;
-	} catch (error) {
-		if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
-	}
-	const merged: Record<string, unknown> = { ...current, ...patch };
-	// A shallow spread would drop the base and roles already on disk, so a patched `colorScheme`
-	// layers through the same rule configuration layering uses.
-	if (patch.colorScheme !== undefined)
-		merged.colorScheme = layerColorScheme(current.colorScheme, patch.colorScheme);
-	await writeJsonAtomic(path, merged);
+export interface SaveUserConfigPatchOptions {
+	/** Rechecked after earlier writes finish, before reading and again immediately before publication. */
+	beforeWrite?(): void | Promise<void>;
+	/** Optional observation hook after the temporary file is complete but before the publication guard. */
+	beforePublish?(): void | Promise<void>;
 }
-async function writeJsonAtomic(path: string, value: unknown): Promise<void> {
+
+const configWriteQueues = new Map<string, Promise<void>>();
+
+export async function saveUserConfigPatch(
+	path: string,
+	patch: Partial<AtelierConfig>,
+	options: SaveUserConfigPatchOptions = {},
+): Promise<void> {
+	const previous = configWriteQueues.get(path) ?? Promise.resolve();
+	const operation = previous
+		.catch(() => undefined)
+		.then(async () => {
+			await options.beforeWrite?.();
+			let current: Record<string, unknown> = {};
+			try {
+				const parsed: unknown = JSON.parse(await readFile(path, "utf8"));
+				if (!isRecord(parsed)) throw new Error("User configuration must be a JSON object");
+				current = parsed;
+			} catch (error) {
+				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+			}
+			const merged: Record<string, unknown> = { ...current, ...patch };
+			// A shallow spread would drop the base and roles already on disk, so a patched `colorScheme`
+			// layers through the same rule configuration layering uses.
+			if (patch.colorScheme !== undefined)
+				merged.colorScheme = layerColorScheme(current.colorScheme, patch.colorScheme);
+			await writeJsonAtomic(path, merged, async () => {
+				await options.beforePublish?.();
+				await options.beforeWrite?.();
+			});
+		});
+	const tracked = operation.then(
+		() => undefined,
+		() => undefined,
+	);
+	configWriteQueues.set(path, tracked);
+	try {
+		await operation;
+	} finally {
+		if (configWriteQueues.get(path) === tracked) configWriteQueues.delete(path);
+	}
+}
+async function writeJsonAtomic(
+	path: string,
+	value: unknown,
+	beforePublish: () => Promise<void>,
+): Promise<void> {
 	await mkdir(dirname(path), { recursive: true });
-	const temporaryPath = `${path}.${process.pid}.tmp`;
+	const temporaryPath = `${path}.${process.pid}.${randomUUID()}.tmp`;
 	try {
 		await writeFile(temporaryPath, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
+		await beforePublish();
 		await rename(temporaryPath, path);
 	} finally {
 		await rm(temporaryPath, { force: true }).catch(() => undefined);

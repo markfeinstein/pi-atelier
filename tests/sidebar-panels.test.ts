@@ -1,6 +1,4 @@
-import { disposeAfterTest } from "./helpers/cleanup.js";
 import { describe, expect, it, vi } from "vitest";
-import { eventTransport } from "./helpers/events.js";
 import {
 	createSidebarPanelRegistry,
 	isSidebarPanelContributionId,
@@ -13,12 +11,18 @@ import {
 	SIDEBAR_PANEL_MAX_PANELS,
 	SIDEBAR_PANEL_MAX_RAW_REQUEST_ID_CODE_UNITS,
 	SIDEBAR_PANEL_MAX_RAW_TITLE_CODE_UNITS,
+	SIDEBAR_PANEL_MAX_RICH_NODES,
+	SIDEBAR_PANEL_MAX_RICH_UNITS,
+	SIDEBAR_PANEL_MAX_RICH_VISIBLE_CHARS,
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
 	SIDEBAR_PANEL_MAX_SOURCE_CHARS,
 	SIDEBAR_PANEL_MAX_TITLE_CHARS,
 	SIDEBAR_PANEL_MAX_TRACKED_SOURCES,
+	sanitizeSidebarPanelRich,
 } from "../src/sidebar-panels.js";
+import { disposeAfterTest } from "./helpers/cleanup.js";
+import { eventTransport } from "./helpers/events.js";
 
 // Keep ownership and revision explicit; payloads may deliberately violate the protocol.
 const registration = (source: string, revision: number, panel: unknown) => ({
@@ -519,5 +523,186 @@ describe("sidebar contribution protocol", () => {
 		registry.dispose();
 		publisher.update({ id: "vendor:queue", title: "After dispose", rows: ["three"] });
 		expect(registry.getAvailable()).toEqual([]);
+	});
+
+	it("clears descriptors before surfacing unsubscribe failures and remains idempotent", () => {
+		const unsubscribe = vi.fn(() => {
+			throw new Error("unsubscribe failed");
+		});
+		const registry = createSidebarPanelRegistry({
+			events: { on: () => unsubscribe, emit: vi.fn() },
+		});
+		expect(registry.register({ id: "vendor:queue", title: "Queue", rows: [] })).toBe(true);
+		expect(() => registry.dispose()).toThrow("unsubscribe failed");
+		expect(registry.getAll()).toEqual([]);
+		expect(() => registry.dispose()).not.toThrow();
+	});
+
+	it("tracks producer availability without rendering unavailable descriptors", () => {
+		const registry = disposeAfterTest(createSidebarPanelRegistry());
+		expect(
+			registry.register({
+				id: "vendor:queue",
+				title: "Queue",
+				rows: ["fallback"],
+				rich: {
+					version: 1,
+					expanded: [{ kind: "text", text: "ready" }],
+					compact: [{ kind: "text", text: "idle" }],
+					collapsible: true,
+				},
+				availability: { available: false, reason: "\u001b[31mWaiting\nfor host" },
+			}),
+		).toBe(true);
+		expect(registry.getAvailable()).toEqual([]);
+		expect(registry.get("vendor:queue")).toBeUndefined();
+		expect(registry.getAll()).toMatchObject([
+			{
+				id: "vendor:queue",
+				title: "Queue",
+				available: false,
+				reason: "Waiting for host",
+				rich: { collapsible: true },
+			},
+		]);
+		expect(registry.register({ id: "vendor:queue", title: "Queue", rows: ["ready"] }, "vendor")).toBe(true);
+		expect(registry.getAvailable()).toHaveLength(1);
+		expect(registry.unregister("vendor:queue", "vendor")).toBe(true);
+		expect(registry.getAll()).toEqual([]);
+		expect(
+			registry.register({
+				id: "vendor:invalid",
+				title: "Invalid",
+				rows: [],
+				availability: { available: "no" } as never,
+			}),
+		).toBe(false);
+	});
+
+	it("bounds roles and literal colors before metadata lookup", () => {
+		const huge = "x".repeat(1_000_000);
+		const registry = disposeAfterTest(createSidebarPanelRegistry());
+		expect(
+			registry.register({
+				id: "vendor:row-role",
+				title: "Role",
+				rows: [{ text: "safe", role: huge as never }],
+			}),
+		).toBe(true);
+		expect(registry.get("vendor:row-role")?.rows).toEqual([{ text: "safe" }]);
+		for (const expanded of [
+			[{ kind: "text", text: "x", role: huge }],
+			[{ kind: "spans", spans: [{ text: "x", role: huge }] }],
+			[{ kind: "spans", spans: [{ text: "x", color: huge }] }],
+			[{ kind: "keyValue", label: "x", value: "y", labelRole: huge }],
+			[{ kind: "keyValue", label: "x", value: "y", valueRole: huge }],
+			[{ kind: "keyValue", label: "x", value: "y", valueColor: huge }],
+			[{ kind: "bar", segments: [{ key: "x", value: 1, role: huge }] }],
+			[{ kind: "bar", segments: [{ key: "x", value: 1, color: huge }] }],
+		]) {
+			expect(sanitizeSidebarPanelRich({ version: 1, expanded })).toBeUndefined();
+		}
+	});
+
+	it("sanitizes bounded rich primitives without invalidating legacy rows", () => {
+		const rich = sanitizeSidebarPanelRich({
+			version: 1,
+			expanded: [
+				{ kind: "text", text: "\u001b[31mReady\u001b[0m", role: "ready" },
+				{ kind: "spans", spans: [{ text: "A " }, { text: "B", color: "#aabbcc" }] },
+				{
+					kind: "bar",
+					segments: [
+						{ key: "used", value: 2 },
+						{ key: "free", value: 3 },
+					],
+				},
+				{ kind: "progress", label: "Queue", current: 2, total: 4 },
+			],
+			compact: [{ kind: "keyValue", label: "Q", value: "2/4" }],
+			collapsible: true,
+		});
+		expect(rich?.version).toBe(1);
+		expect(rich?.collapsible).toBe(true);
+		expect(rich?.expanded[0]).toEqual({ kind: "text", text: "Ready", role: "ready" });
+		expect(
+			sanitizeSidebarPanelRich({ version: 1, expanded: [{ kind: "text", text: "x", color: "red" }] }),
+		).toMatchObject({ expanded: [{ kind: "text", text: "x" }] });
+		expect(
+			sanitizeSidebarPanelRich({
+				version: 1,
+				expanded: [{ kind: "spans", spans: [{ text: "x", color: "red" }] }],
+			}),
+		).toBeUndefined();
+		expect(
+			sanitizeSidebarPanelRich({
+				version: 1,
+				expanded: Array.from({ length: SIDEBAR_PANEL_MAX_RICH_NODES + 1 }, () => ({ kind: "spacer" })),
+			}),
+		).toBeUndefined();
+		expect(
+			sanitizeSidebarPanelRich({ version: 1, expanded: [{ kind: "text", text: "x", role: "bogus" }] }),
+		).toBeUndefined();
+		expect(
+			sanitizeSidebarPanelRich({
+				version: 1,
+				expanded: [{ kind: "text", text: "same" }],
+				compact: [{ kind: "text", text: "same" }],
+				collapsible: true,
+			}),
+		).toBeUndefined();
+		expect(
+			sanitizeSidebarPanelRich({
+				version: 1,
+				expanded: [{ kind: "text", text: "x" }],
+				compact: [],
+			}),
+		).toBeUndefined();
+		expect(
+			sanitizeSidebarPanelRich({
+				version: 1,
+				expanded: [{ kind: "text", text: "x" }],
+				collapsible: "yes",
+			}),
+		).toBeUndefined();
+
+		const expanded = Array.from({ length: SIDEBAR_PANEL_MAX_RICH_NODES }, () => ({
+			kind: "text",
+			text: "x",
+		}));
+		const compact = expanded.map((node, index) => ({ ...node, text: index === 0 ? "y" : node.text }));
+		expect(SIDEBAR_PANEL_MAX_RICH_UNITS).toBe(SIDEBAR_PANEL_MAX_RICH_NODES * 2);
+		expect(sanitizeSidebarPanelRich({ version: 1, expanded, compact, collapsible: true })).toBeDefined();
+		expect(
+			sanitizeSidebarPanelRich({
+				version: 1,
+				expanded,
+				compact: [{ kind: "spans", spans: compact.map((node) => ({ text: node.text })) }],
+				collapsible: true,
+			}),
+		).toBeUndefined();
+		const visibleBoundary = [
+			...Array.from({ length: 25 }, () => ({ kind: "text", text: "x".repeat(160) })),
+			{ kind: "text", text: "x".repeat(SIDEBAR_PANEL_MAX_RICH_VISIBLE_CHARS - 25 * 160) },
+		];
+		expect(sanitizeSidebarPanelRich({ version: 1, expanded: visibleBoundary })).toBeDefined();
+		expect(
+			sanitizeSidebarPanelRich({
+				version: 1,
+				expanded: [...visibleBoundary, { kind: "text", text: "x" }],
+			}),
+		).toBeUndefined();
+
+		const registry = disposeAfterTest(createSidebarPanelRegistry());
+		expect(
+			registry.register({
+				id: "vendor:rich",
+				title: "Rich",
+				rows: ["fallback"],
+				rich: { version: 2, expanded: [] } as never,
+			}),
+		).toBe(true);
+		expect(registry.get("vendor:rich")?.rows[0]?.text).toBe("fallback");
+		expect(registry.get("vendor:rich")?.rich).toBeUndefined();
 	});
 });

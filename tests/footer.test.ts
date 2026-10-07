@@ -606,9 +606,8 @@ describe("footer", () => {
 		const colored = renderFooterLine(state, DEFAULT_CONFIG, namedTheme("light"), 180, true);
 		expect(stripAnsi(disabled)).toBe(stripAnsi(colored));
 		expect(disabled).not.toContain("\u001b[38;2;");
-		expect(fg.mock.calls.map(([color]) => color)).toEqual(
-			expect.arrayContaining(["text", "muted", "warning"]),
-		);
+		expect(fg).not.toHaveBeenCalled();
+		expect(disabled).not.toMatch(/\u001b\[[0-?]*[ -/]*[@-~]/);
 	});
 
 	it("keeps ANSI-heavy themed output within every responsive width", () => {

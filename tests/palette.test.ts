@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createPalette } from "../src/palette.js";
+import { colorAwareTheme, createPalette, isColorEnabled, PALETTE_ROLES } from "../src/palette.js";
 import type { AtelierColorScheme } from "../src/types.js";
 
 const rgb = (red: number, green: number, blue: number, text = "X") =>
@@ -29,6 +29,24 @@ const fixedDarkRoles = [
 ] as const;
 
 describe("Fixed Dark Midnight Spectrum", () => {
+	it("follows NO_COLOR non-empty-value semantics", () => {
+		expect(isColorEnabled({})).toBe(true);
+		expect(isColorEnabled({ NO_COLOR: "" })).toBe(true);
+		expect(isColorEnabled({ NO_COLOR: "1" })).toBe(false);
+	});
+
+	it("paints only validated literal rich colors when color is enabled", () => {
+		expect(createPalette(themed("dark"), true).paintHex?.("#aabbcc", "X")).toBe(rgb(170, 187, 204));
+		expect(createPalette(themed("dark"), true).paintHex?.("red", "X")).toBeUndefined();
+		expect(createPalette(themed("dark"), false).paintHex?.("#aabbcc", "X")).toBeUndefined();
+	});
+
+	it("suppresses Atelier foreground calls when color is disabled", () => {
+		const theme = themed("dark");
+		expect(createPalette(theme, false).paint("error", "X")).toBe("X");
+		expect(colorAwareTheme(theme, false).fg("error", "X")).toBe("X");
+		expect(theme.fg).not.toHaveBeenCalled();
+	});
 	it.each(["dark", "light", "nord", "solarized"])(
 		"uses the same dark palette for the selected %s theme",
 		(themeName) => {
@@ -52,17 +70,11 @@ describe("Fixed Dark Midnight Spectrum", () => {
 		expect(palette.paint("menu", "X")).toBe("<thinkingHigh>X</thinkingHigh>");
 	});
 
-	it("uses neutral and semantic roles without RGB when color is disabled", () => {
-		const palette = createPalette(themed("light"), false);
-		for (const role of ["ready", "working", "input", "output", "cache", "cost", "context", "menu"] as const) {
-			expect(palette.paint(role, "X")).toBe("<text>X</text>");
-		}
-		expect(palette.paint("accent", "X")).toBe("<accent>X</accent>");
-		expect(palette.paint("primary", "X")).toBe("<text>X</text>");
-		expect(palette.paint("muted", "X")).toBe("<muted>X</muted>");
-		expect(palette.paint("dim", "X")).toBe("<dim>X</dim>");
-		expect(palette.paint("warning", "X")).toBe("<warning>X</warning>");
-		expect(palette.paint("error", "X")).toBe("<error>X</error>");
+	it("emits plain text without foreground calls when color is disabled", () => {
+		const theme = themed("light");
+		const palette = createPalette(theme, false);
+		for (const role of PALETTE_ROLES) expect(palette.paint(role, "X")).toBe("X");
+		expect(theme.fg).not.toHaveBeenCalled();
 	});
 
 	it("can inherit the selected Pi theme tokens", () => {

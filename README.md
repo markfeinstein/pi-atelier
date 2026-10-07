@@ -119,7 +119,7 @@ Project settings override user settings. Session changes override both. Global f
 }
 ```
 
-Use **Settings → Display** to reorder or hide status rail segments and sidebar panels. Undo restores the latest Display or Sidebar edit, including a Display Revert. Legacy user settings `showSidebarAgent` and `showSidebarTodos` remain supported when `sidebarPanelLayout` is absent.
+Use **Settings → Display** to reorder or hide status rail segments and sidebar panels. Rich contributed panels can also expose compact and expanded presentations; select one and press **C** to change its persisted global-user state, then save. Unavailable contributed panel IDs remain listed so their saved order and visibility can be maintained. Undo restores the latest Display or Sidebar edit, including collapse state and a Display Revert. Legacy user settings `showSidebarAgent` and `showSidebarTodos` remain supported when `sidebarPanelLayout` is absent.
 
 `statusRailPlacement` controls where the rail appears. The default, `"footer"`, keeps Atelier's rounded editor and renders the complete rail below the composer with quiet dot-separated identity items and compact right-aligned telemetry; Nerd Font item icons remain available. Set it to `"composer"` to embed identity and context in the composer's top border and leave measured telemetry below it. Composer mode automatically falls back to its complete grouped footer when the header is unavailable or the terminal is too narrow or short.
 
@@ -127,7 +127,13 @@ Use **Settings → Display** to reorder or hide status rail segments and sidebar
 
 `colorScheme` accepts `"atelier"`, `"inherit"`, or a custom role map. Custom maps may set `base` to either named scheme and override roles such as `accent`, `working`, `input`, `output`, `cache`, `cost`, `context`, `warning`, `error`, `chartPink`, and `chartGreen`. Values may be Pi theme tokens, `#RRGGBB`, xterm indices from 0 to 255, or an empty string for the terminal default. Custom objects layer role by role across user, trusted-project, and session configuration.
 
-Extension statuses are sanitized before rendering, including CSI, OSC, C1, and single-character terminal escape sequences.
+Extension statuses are sanitized before rendering, including CSI, OSC, C1, and single-character terminal escape sequences. A non-empty `NO_COLOR` value makes Atelier-authored foreground painting plain text, including the composer frame, menus, Settings, usage overlays, and contributed literal colors, while preserving host-owned editor content; leaving `NO_COLOR` unset or empty preserves color.
+
+### Contributed sidebar panels
+
+Extensions can publish presentation-only panels over Pi's local event bus with `registerSidebarPanel`. Protocol-v1 `rows` remain mandatory and work unchanged. Producers may additionally provide flat rich nodes for text, spans, key/value rows, headings, bars, progress, and spacing, with optional compact content. Atelier applies shared aggregate budgets across expanded and compact content, including nested items, raw input, and sanitized output; strips terminal control sequences; accepts literal colors only as `#RRGGBB`; and rejects malformed roles, colors, numbers, optional fields, or non-finite values. Rich content has no callbacks, actions, arbitrary ANSI, or nesting, and invalid rich data falls back wholly to legacy rows.
+
+Contributed panels do not add network access. Producers may publish `{ available: false, reason }`; the bounded, sanitized descriptor remains identifiable in Settings while registered but does not render, and disappears on unregister. Mouse panel interactions remain available only during Sidebar Resize mode.
 
 ## Troubleshooting
 
@@ -147,6 +153,7 @@ Pi Atelier:
 - Does not read untracked file contents
 - Reads project configuration only for trusted projects
 - Does not include prompts or responses in notifications
+- Accepts contributed sidebar presentation data only through Pi's local event bus; contributors receive no Atelier network or credential access
 
 ## Development
 

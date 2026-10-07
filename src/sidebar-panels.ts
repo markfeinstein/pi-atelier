@@ -35,6 +35,20 @@ export const SIDEBAR_PANEL_MAX_SOURCE_CHARS = 128;
 export const SIDEBAR_PANEL_MAX_PANELS = 64;
 /** Maximum distinct event sources tracked by one registry. */
 export const SIDEBAR_PANEL_MAX_TRACKED_SOURCES = SIDEBAR_PANEL_MAX_PANELS;
+/** Maximum nodes retained in one rich representation. */
+export const SIDEBAR_PANEL_MAX_RICH_NODES = 48;
+/** Maximum spans retained in one spans node. */
+export const SIDEBAR_PANEL_MAX_RICH_SPANS = 16;
+/** Maximum segments retained in one bar node. */
+export const SIDEBAR_PANEL_MAX_RICH_SEGMENTS = 16;
+/** Shared complexity budget across expanded and compact rich representations. */
+export const SIDEBAR_PANEL_MAX_RICH_UNITS = 96;
+/** Shared raw UTF-16 input budget across all rich text fields. */
+export const SIDEBAR_PANEL_MAX_RICH_RAW_CODE_UNITS = 8192;
+/** Shared sanitized Unicode output budget across all rich text fields. */
+export const SIDEBAR_PANEL_MAX_RICH_VISIBLE_CHARS = 4096;
+/** Maximum visible characters retained for an unavailable reason. */
+export const SIDEBAR_PANEL_MAX_REASON_CHARS = 160;
 
 /** Built-in panels remain available even when their optional content is empty. */
 export const BUILTIN_SIDEBAR_PANEL_IDS = [
@@ -73,6 +87,7 @@ const PANEL_ROLE_VALUES = [
 	"cache",
 	"context",
 ] as const;
+const SIDEBAR_PANEL_MAX_ROLE_CHARS = Math.max(...PANEL_ROLE_VALUES.map((role) => role.length));
 const PANEL_ROLES = new Set<string>(PANEL_ROLE_VALUES);
 
 export type SidebarPanelRole = (typeof PANEL_ROLE_VALUES)[number];
@@ -82,12 +97,88 @@ export interface SidebarPanelRow {
 	role?: SidebarPanelRole;
 }
 
+export interface SidebarTextNode {
+	kind: "text";
+	text: string;
+	role?: SidebarPanelRole;
+}
+export interface SidebarSpansNode {
+	kind: "spans";
+	spans: readonly SidebarSpan[];
+}
+export interface SidebarSpan {
+	text: string;
+	role?: SidebarPanelRole;
+	color?: `#${string}`;
+}
+export interface SidebarKeyValueNode {
+	kind: "keyValue";
+	label: string;
+	value: string;
+	labelRole?: SidebarPanelRole;
+	valueRole?: SidebarPanelRole;
+	valueColor?: `#${string}`;
+}
+export interface SidebarHeadingNode {
+	kind: "heading";
+	text: string;
+	role?: SidebarPanelRole;
+}
+export interface SidebarBarNode {
+	kind: "bar";
+	segments: readonly SidebarBarSegment[];
+	label?: string;
+}
+export interface SidebarBarSegment {
+	key: string;
+	value: number;
+	role?: SidebarPanelRole;
+	color?: `#${string}`;
+	label?: string;
+}
+export interface SidebarProgressNode {
+	kind: "progress";
+	label: string;
+	current: number;
+	total?: number;
+	role?: SidebarPanelRole;
+	detail?: string;
+}
+export interface SidebarSpacerNode {
+	kind: "spacer";
+}
+
+/** Flat, bounded presentation primitives. They cannot nest or invoke callbacks. */
+export type SidebarPanelNode =
+	| SidebarTextNode
+	| SidebarSpansNode
+	| SidebarKeyValueNode
+	| SidebarHeadingNode
+	| SidebarBarNode
+	| SidebarProgressNode
+	| SidebarSpacerNode;
+
+/** Optional additive rich representation; protocol-v1 rows remain mandatory fallback. */
+export interface SidebarPanelRichContent {
+	version: 1;
+	expanded: SidebarPanelNode[];
+	compact?: SidebarPanelNode[];
+	collapsible?: boolean;
+}
+
 /** Structured, presentation-only data accepted from another extension. */
+export interface SidebarPanelAvailability {
+	available: boolean;
+	reason?: string;
+}
+
 export interface SidebarPanelContribution {
 	id: ContributedSidebarPanelId;
 	title: string;
 	rows: readonly (string | SidebarPanelRow)[];
 	role?: SidebarPanelRole;
+	rich?: SidebarPanelRichContent;
+	availability?: SidebarPanelAvailability;
 }
 
 interface SanitizedSidebarPanelContribution {
@@ -95,12 +186,19 @@ interface SanitizedSidebarPanelContribution {
 	title: string;
 	rows: SidebarPanelRow[];
 	role?: SidebarPanelRole;
+	rich?: SidebarPanelRichContent;
+	availability: SidebarPanelAvailability;
 }
 
-export interface SidebarPanelData extends Omit<SidebarPanelContribution, "rows"> {
+export interface SidebarPanelDescriptor extends Omit<SidebarPanelContribution, "rows" | "availability"> {
 	rows: readonly SidebarPanelRow[];
-	available: true;
+	available: boolean;
+	reason?: string;
 	source: string;
+}
+
+export interface SidebarPanelData extends SidebarPanelDescriptor {
+	available: true;
 }
 
 export type { SidebarPanelLayout, SidebarPanelLayoutEntry };
@@ -143,6 +241,8 @@ export interface SidebarPanelRegistry {
 	register(panel: SidebarPanelContribution, source?: string): boolean;
 	unregister(id: ContributedSidebarPanelId, source?: string): boolean;
 	getAvailable(): readonly SidebarPanelData[];
+	/** All currently registered descriptors, including producer-declared unavailable panels. */
+	getAll(): readonly SidebarPanelDescriptor[];
 	get(id: string): SidebarPanelData | undefined;
 	/** Handle a public event directly; useful for runtime and public-seam tests. */
 	handleEvent(data: unknown): void;
@@ -205,7 +305,7 @@ function isSafeRevision(value: unknown): value is number {
 }
 
 export function isSidebarPanelRole(value: unknown): value is SidebarPanelRole {
-	return typeof value === "string" && PANEL_ROLES.has(value);
+	return typeof value === "string" && value.length <= SIDEBAR_PANEL_MAX_ROLE_CHARS && PANEL_ROLES.has(value);
 }
 
 /**
@@ -274,12 +374,12 @@ function boundedRawText(value: string, maxChars: number): string {
 	return /[\ud800-\udbff]$/.test(bounded) ? bounded.slice(0, -1) : bounded;
 }
 
-function cleanSidebarPanelText(value: string): string {
-	return value
+function cleanSidebarPanelText(value: string, trim = true): string {
+	const cleaned = value
 		.replace(ANSI_ESCAPE, "")
 		.replace(/[\u0000-\u001f\u007f-\u009f]/g, " ")
-		.replace(/\s+/g, " ")
-		.trim();
+		.replace(/\s+/g, " ");
+	return trim ? cleaned.trim() : cleaned;
 }
 
 /** Defensively sanitize text before any Settings or Sidebar interpolation. */
@@ -287,6 +387,197 @@ export function sanitizeSidebarPanelText(value: string, maxChars = SIDEBAR_PANEL
 	return Array.from(cleanSidebarPanelText(boundedRawText(value, maxChars)))
 		.slice(0, maxChars)
 		.join("");
+}
+
+const SIDEBAR_PANEL_RICH_COLOR = /^#[0-9a-fA-F]{6}$/;
+
+interface RichBudget {
+	units: number;
+	rawCodeUnits: number;
+	visibleChars: number;
+}
+
+function consumeRichUnit(budget: RichBudget, count = 1): boolean {
+	budget.units += count;
+	return budget.units <= SIDEBAR_PANEL_MAX_RICH_UNITS;
+}
+
+function sanitizeRichText(value: unknown, budget: RichBudget, trim = true): string | undefined {
+	if (typeof value !== "string" || value.length > SIDEBAR_PANEL_MAX_RAW_ROW_CODE_UNITS) return undefined;
+	budget.rawCodeUnits += value.length;
+	if (budget.rawCodeUnits > SIDEBAR_PANEL_MAX_RICH_RAW_CODE_UNITS) return undefined;
+	const cleaned = cleanSidebarPanelText(value, trim);
+	const visible = Array.from(cleaned).length;
+	budget.visibleChars += visible;
+	if (visible > SIDEBAR_PANEL_MAX_ROW_CHARS || budget.visibleChars > SIDEBAR_PANEL_MAX_RICH_VISIBLE_CHARS)
+		return undefined;
+	return cleaned;
+}
+
+function sanitizeRichColor(value: unknown): `#${string}` | undefined {
+	return typeof value === "string" && value.length === 7 && SIDEBAR_PANEL_RICH_COLOR.test(value)
+		? (value as `#${string}`)
+		: undefined;
+}
+
+function strictRole(value: unknown): SidebarPanelRole | undefined | false {
+	return value === undefined ? undefined : isSidebarPanelRole(value) ? value : false;
+}
+
+function sanitizeRichNode(value: unknown, budget: RichBudget): SidebarPanelNode | undefined {
+	if (!isRecord(value) || !consumeRichUnit(budget)) return undefined;
+	const role = strictRole(value.role);
+	if (role === false) return undefined;
+	switch (value.kind) {
+		case "text":
+		case "heading": {
+			const text = sanitizeRichText(value.text, budget);
+			return text === undefined ? undefined : { kind: value.kind, text, ...(role ? { role } : {}) };
+		}
+		case "spans": {
+			if (!Array.isArray(value.spans) || value.spans.length > SIDEBAR_PANEL_MAX_RICH_SPANS) return undefined;
+			const spans: SidebarSpan[] = [];
+			for (const raw of value.spans) {
+				if (!isRecord(raw) || !consumeRichUnit(budget)) return undefined;
+				const text = sanitizeRichText(raw.text, budget, false);
+				const spanRole = strictRole(raw.role);
+				const color = raw.color === undefined ? undefined : sanitizeRichColor(raw.color);
+				if (text === undefined || spanRole === false || (raw.color !== undefined && color === undefined))
+					return undefined;
+				spans.push({ text, ...(spanRole ? { role: spanRole } : {}), ...(color ? { color } : {}) });
+			}
+			return { kind: "spans", spans };
+		}
+		case "keyValue": {
+			const labelRole = strictRole(value.labelRole);
+			const valueRole = strictRole(value.valueRole);
+			const label = sanitizeRichText(value.label, budget);
+			const rawValue = sanitizeRichText(value.value, budget);
+			const valueColor = value.valueColor === undefined ? undefined : sanitizeRichColor(value.valueColor);
+			if (
+				label === undefined ||
+				rawValue === undefined ||
+				labelRole === false ||
+				valueRole === false ||
+				(value.valueColor !== undefined && !valueColor)
+			)
+				return undefined;
+			return {
+				kind: "keyValue",
+				label,
+				value: rawValue,
+				...(labelRole ? { labelRole } : {}),
+				...(valueRole ? { valueRole } : {}),
+				...(valueColor ? { valueColor } : {}),
+			};
+		}
+		case "bar": {
+			if (
+				!Array.isArray(value.segments) ||
+				value.segments.length === 0 ||
+				value.segments.length > SIDEBAR_PANEL_MAX_RICH_SEGMENTS
+			)
+				return undefined;
+			const segments: SidebarBarSegment[] = [];
+			for (const raw of value.segments) {
+				if (!isRecord(raw) || !consumeRichUnit(budget)) return undefined;
+				const segmentRole = strictRole(raw.role);
+				const key = sanitizeRichText(raw.key, budget);
+				const color = raw.color === undefined ? undefined : sanitizeRichColor(raw.color);
+				const label = raw.label === undefined ? undefined : sanitizeRichText(raw.label, budget);
+				if (
+					key === undefined ||
+					segmentRole === false ||
+					typeof raw.value !== "number" ||
+					!Number.isFinite(raw.value) ||
+					raw.value < 0 ||
+					(raw.color !== undefined && !color) ||
+					(raw.label !== undefined && label === undefined)
+				)
+					return undefined;
+				segments.push({
+					key,
+					value: raw.value,
+					...(segmentRole ? { role: segmentRole } : {}),
+					...(color ? { color } : {}),
+					...(label ? { label } : {}),
+				});
+			}
+			const label = value.label === undefined ? undefined : sanitizeRichText(value.label, budget);
+			if (value.label !== undefined && label === undefined) return undefined;
+			return { kind: "bar", segments, ...(label ? { label } : {}) };
+		}
+		case "progress": {
+			const label = sanitizeRichText(value.label, budget);
+			const detail = value.detail === undefined ? undefined : sanitizeRichText(value.detail, budget);
+			if (
+				label === undefined ||
+				typeof value.current !== "number" ||
+				!Number.isFinite(value.current) ||
+				value.current < 0 ||
+				(value.total !== undefined &&
+					(typeof value.total !== "number" || !Number.isFinite(value.total) || value.total < 0)) ||
+				(value.detail !== undefined && detail === undefined)
+			)
+				return undefined;
+			return {
+				kind: "progress",
+				label,
+				current: value.current,
+				...(value.total !== undefined ? { total: value.total } : {}),
+				...(role ? { role } : {}),
+				...(detail ? { detail } : {}),
+			};
+		}
+		case "spacer":
+			return { kind: "spacer" };
+		default:
+			return undefined;
+	}
+}
+
+function sanitizeRichNodes(value: unknown, budget: RichBudget): SidebarPanelNode[] | undefined {
+	if (!Array.isArray(value) || value.length === 0 || value.length > SIDEBAR_PANEL_MAX_RICH_NODES)
+		return undefined;
+	const nodes: SidebarPanelNode[] = [];
+	for (const raw of value) {
+		const node = sanitizeRichNode(raw, budget);
+		if (!node) return undefined;
+		nodes.push(node);
+	}
+	return nodes;
+}
+
+/** Validate optional rich content while retaining mandatory legacy-row fallback on failure. */
+export function sanitizeSidebarPanelRich(value: unknown): SidebarPanelRichContent | undefined {
+	if (!isRecord(value) || value.version !== 1) return undefined;
+	const budget: RichBudget = { units: 0, rawCodeUnits: 0, visibleChars: 0 };
+	const expanded = sanitizeRichNodes(value.expanded, budget);
+	if (!expanded) return undefined;
+	const compact = value.compact === undefined ? undefined : sanitizeRichNodes(value.compact, budget);
+	if (value.compact !== undefined && !compact) return undefined;
+	if (value.collapsible !== undefined && typeof value.collapsible !== "boolean") return undefined;
+	if (compact && JSON.stringify(compact) === JSON.stringify(expanded)) return undefined;
+	if (value.collapsible !== undefined && !compact) return undefined;
+	return {
+		version: 1,
+		expanded,
+		...(compact ? { compact } : {}),
+		...(typeof value.collapsible === "boolean" ? { collapsible: value.collapsible } : {}),
+	};
+}
+
+function sanitizeAvailability(value: unknown): SidebarPanelAvailability | undefined {
+	if (value === undefined) return { available: true };
+	if (!isRecord(value) || typeof value.available !== "boolean") return undefined;
+	if (value.reason !== undefined && typeof value.reason !== "string") return undefined;
+	const reason =
+		value.reason === undefined
+			? undefined
+			: sanitizeSidebarPanelText(value.reason, SIDEBAR_PANEL_MAX_REASON_CHARS);
+	if (value.reason !== undefined && (!reason || Array.from(reason).length > SIDEBAR_PANEL_MAX_REASON_CHARS))
+		return undefined;
+	return { available: value.available, ...(reason ? { reason } : {}) };
 }
 
 function sanitizeContribution(value: unknown): SanitizedSidebarPanelContribution | undefined {
@@ -314,11 +605,16 @@ function sanitizeContribution(value: unknown): SanitizedSidebarPanelContribution
 			...(isRecord(row) && isSidebarPanelRole(row.role) ? { role: row.role } : {}),
 		});
 	}
+	const rich = sanitizeSidebarPanelRich(value.rich);
+	const availability = sanitizeAvailability(value.availability);
+	if (!availability) return undefined;
 	return {
 		id: value.id,
 		title,
 		rows,
 		...(isSidebarPanelRole(value.role) ? { role: value.role } : {}),
+		...(rich ? { rich } : {}),
+		availability,
 	};
 }
 
@@ -376,30 +672,33 @@ function discoveryPrefix(instanceId: unknown): string {
 	return isSidebarPanelRequestId(bounded) ? bounded : DEFAULT_DISCOVERY_PREFIX;
 }
 
-function sidebarPanelDataEqual(first: SidebarPanelData, second: SidebarPanelData): boolean {
+function sidebarPanelDataEqual(first: SidebarPanelDescriptor, second: SidebarPanelDescriptor): boolean {
 	return (
 		first.id === second.id &&
 		first.title === second.title &&
 		first.role === second.role &&
 		first.available === second.available &&
+		first.reason === second.reason &&
 		first.source === second.source &&
 		first.rows.length === second.rows.length &&
 		first.rows.every(
 			(row, index) => row.text === second.rows[index]?.text && row.role === second.rows[index]?.role,
-		)
+		) &&
+		JSON.stringify(first.rich ?? null) === JSON.stringify(second.rich ?? null)
 	);
 }
 
-function cloneSidebarPanelData(panel: SidebarPanelData): SidebarPanelData {
+function cloneSidebarPanelData(panel: SidebarPanelDescriptor): SidebarPanelDescriptor {
 	return {
 		...panel,
 		rows: panel.rows.map((row) => ({ text: row.text, ...(row.role ? { role: row.role } : {}) })),
+		...(panel.rich ? { rich: structuredClone(panel.rich) } : {}),
 	};
 }
 
 /** Create a lifecycle-safe registry backed only by Pi's public event bus. */
 export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions = {}): SidebarPanelRegistry {
-	const panels = new Map<string, SidebarPanelData>();
+	const panels = new Map<string, SidebarPanelDescriptor>();
 	const revisions = new Map<string, number>();
 	let disposed = false;
 	let requestSequence = 0;
@@ -428,9 +727,11 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		return panels.has(panel.id) || panels.size < SIDEBAR_PANEL_MAX_PANELS;
 	};
 	const applyRegister = (safe: SanitizedSidebarPanelContribution, resolvedSource: string): boolean => {
-		const next: SidebarPanelData = {
-			...safe,
-			available: true,
+		const { availability, ...content } = safe;
+		const next: SidebarPanelDescriptor = {
+			...content,
+			available: availability.available,
+			...(availability.reason ? { reason: availability.reason } : {}),
 			source: resolvedSource,
 		};
 		const previous = panels.get(safe.id);
@@ -513,17 +814,23 @@ export function createSidebarPanelRegistry(options: SidebarPanelRegistryOptions 
 		unregister,
 		handleEvent,
 		requestDiscovery,
-		getAvailable: () => [...panels.values()].map(cloneSidebarPanelData),
+		getAvailable: () =>
+			[...panels.values()]
+				.filter((panel): panel is SidebarPanelData => panel.available)
+				.map((panel) => cloneSidebarPanelData(panel) as SidebarPanelData),
+		getAll: () => [...panels.values()].map(cloneSidebarPanelData),
 		get: (id) => {
 			const panel = panels.get(id);
-			return panel ? cloneSidebarPanelData(panel) : undefined;
+			return panel?.available ? (cloneSidebarPanelData(panel) as SidebarPanelData) : undefined;
 		},
 		dispose: () => {
 			if (disposed) return;
 			disposed = true;
-			unsubscribe?.();
+			const off = unsubscribe;
 			unsubscribe = undefined;
 			panels.clear();
+			revisions.clear();
+			off?.();
 		},
 	};
 }
@@ -581,17 +888,29 @@ export function registerSidebarPanel(
 		dispose() {
 			if (disposed) return;
 			disposed = true;
-			unsubscribe();
-			if (!source || !current) return;
-			const revision = nextSidebarPanelRevision(pi.events, source);
-			if (revision === undefined) return;
-			pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
-				version: SIDEBAR_PANEL_PROTOCOL_VERSION,
-				type: "unregister",
-				source,
-				revision,
-				id: current.id,
-			});
+			let failure: unknown;
+			try {
+				unsubscribe();
+			} catch (error) {
+				failure = error;
+			}
+			if (source && current) {
+				try {
+					const revision = nextSidebarPanelRevision(pi.events, source);
+					if (revision !== undefined)
+						pi.events.emit(SIDEBAR_PANEL_EVENT_CHANNEL, {
+							version: SIDEBAR_PANEL_PROTOCOL_VERSION,
+							type: "unregister",
+							source,
+							revision,
+							id: current.id,
+						});
+				} catch (error) {
+					failure ??= error;
+				}
+			}
+			current = undefined;
+			if (failure) throw failure;
 		},
 	};
 }

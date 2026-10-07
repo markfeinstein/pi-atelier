@@ -1,8 +1,8 @@
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import { applyDisplayTemplate } from "./display.js";
 import type { PaletteRole } from "./palette.js";
-import type { SubagentUsageSnapshot } from "./subagent-usage.js";
 import { DEFAULT_SIDEBAR_PANEL_LAYOUT } from "./sidebar-panels.js";
+import type { SubagentUsageSnapshot } from "./subagent-usage.js";
 import type { WorkspacePulseData } from "./workspace-pulse.js";
 
 export type TemplateName = "editorial" | "minimal" | "classic";
@@ -79,6 +79,8 @@ export interface DisplayPatch {
 	density?: Density;
 	segmentLayout?: SegmentLayout;
 	sidebarPanelLayout?: SidebarPanelLayout;
+	/** User-global rich contributed-panel collapse state. */
+	contributedPanelCollapsed?: Record<string, boolean>;
 }
 
 export interface DisplayProvenance {
@@ -121,6 +123,8 @@ export interface AtelierConfig extends DisplaySettings {
 	showSidebarToolNames: boolean;
 	showSidebarOnStartup: boolean;
 	sidebarPanelLayout: SidebarPanelLayout;
+	/** Atelier-owned rich contributed-panel collapse state, keyed by panel ID. */
+	contributedPanelCollapsed: Record<string, boolean>;
 	completionNotifications: boolean;
 	/** Omitted uses the built-in playful phrases; `false` disables them; a list overrides them. */
 	workingLabels?: readonly string[] | false;
@@ -179,6 +183,7 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	showSidebarToolNames: false,
 	showSidebarOnStartup: true,
 	sidebarPanelLayout: DEFAULT_SIDEBAR_PANEL_LAYOUT.map((entry) => ({ ...entry })),
+	contributedPanelCollapsed: {},
 	completionNotifications: true,
 	colorScheme: "atelier",
 	statusRailPlacement: "footer",
