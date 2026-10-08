@@ -20,6 +20,7 @@ import {
 	SIDEBAR_PANEL_MAX_ROW_CHARS,
 	SIDEBAR_PANEL_MAX_ROWS,
 	SIDEBAR_PANEL_MAX_TITLE_CHARS,
+	type SidebarBarSegment,
 	type SidebarPanelData,
 	type SidebarPanelNode,
 	type SidebarPanelRole,
@@ -767,44 +768,107 @@ function paintRich(
 	return painted ?? palette.paint(role ?? fallback, text);
 }
 
+function allocateBarCells(segments: readonly SidebarBarSegment[], width: number): number[] {
+	const safeWidth = Math.max(0, Math.trunc(width));
+	const maximum = segments.reduce(
+		(current, segment) =>
+			Number.isFinite(segment.value) && segment.value > current ? segment.value : current,
+		0,
+	);
+	if (safeWidth === 0 || maximum <= 0) return segments.map(() => 0);
+
+	// Scaling by the largest value keeps the sum finite even when producers send
+	// several values near Number.MAX_VALUE. Largest-remainder allocation then
+	// makes every positive bar occupy exactly the requested number of cells.
+	const weights = segments.map((segment) =>
+		Number.isFinite(segment.value) && segment.value > 0 ? segment.value / maximum : 0,
+	);
+	const total = weights.reduce((sum, weight) => sum + weight, 0);
+	const quotas = weights.map((weight) => (weight / total) * safeWidth);
+	const cells = quotas.map((quota) => Math.floor(quota));
+	let remaining = safeWidth - cells.reduce((sum, count) => sum + count, 0);
+	const order = quotas
+		.map((quota, index) => ({ index, remainder: quota - cells[index]! }))
+		.sort((left, right) => right.remainder - left.remainder || left.index - right.index);
+	for (const entry of order) {
+		if (remaining <= 0) break;
+		cells[entry.index] = (cells[entry.index] ?? 0) + 1;
+		remaining -= 1;
+	}
+	return cells;
+}
+
+function packRichLabels(labels: readonly string[], width: number): string[] {
+	const safeWidth = Math.max(1, Math.trunc(width));
+	const rows: string[] = [];
+	let current = "";
+	for (const label of labels) {
+		const fitted = truncateToWidth(label, safeWidth, "");
+		if (!current) {
+			current = fitted;
+			continue;
+		}
+		if (visibleWidth(current) + 1 + visibleWidth(fitted) <= safeWidth) {
+			current = `${current} ${fitted}`;
+			continue;
+		}
+		rows.push(current);
+		current = fitted;
+	}
+	if (current) rows.push(current);
+	return rows;
+}
+
 function contributedRichNodes(
 	nodes: readonly SidebarPanelNode[],
 	panel: SidebarPanelData,
 	palette: AtelierPalette,
+	contentWidth: number,
 ): string[] {
 	const fallback: PaletteRole = panel.role ?? "primary";
-	return nodes.map((node) => {
+	return nodes.flatMap((node) => {
 		switch (node.kind) {
 			case "text":
-				return palette.paint(node.role ?? fallback, node.text);
+				return [palette.paint(node.role ?? fallback, node.text)];
 			case "spans":
-				return node.spans
-					.map((span) => paintRich(palette, span.color, span.role, fallback, span.text))
-					.join("");
+				return [
+					node.spans.map((span) => paintRich(palette, span.color, span.role, fallback, span.text)).join(""),
+				];
 			case "keyValue": {
 				const width = Math.min(16, Math.max(1, visibleWidth(node.label)));
 				const label = padToWidth(palette.paint(node.labelRole ?? "muted", node.label), width);
-				return `${label} ${paintRich(palette, node.valueColor, node.valueRole, fallback, node.value)}`;
+				return [`${label} ${paintRich(palette, node.valueColor, node.valueRole, fallback, node.value)}`];
 			}
 			case "heading":
-				return palette.paint(node.role ?? "accent", node.text);
+				return [palette.paint(node.role ?? "accent", node.text)];
 			case "bar": {
 				const barWidth = 20;
-				const total = node.segments.reduce((sum, segment) => sum + segment.value, 0);
-				let used = 0;
-				const blocks: string[] = [];
-				for (const segment of node.segments) {
-					const share =
-						total > 0
-							? Math.min(barWidth - used, Math.max(0, Math.round((segment.value / total) * barWidth)))
-							: 0;
-					if (share <= 0) continue;
-					used += share;
-					blocks.push(paintRich(palette, segment.color, segment.role, fallback, "█".repeat(share)));
-				}
+				const shares = allocateBarCells(node.segments, barWidth);
+				const blocks = node.segments.flatMap((segment, index) => {
+					const share = shares[index] ?? 0;
+					return share > 0
+						? [paintRich(palette, segment.color, segment.role, fallback, "█".repeat(share))]
+						: [];
+				});
+				const used = shares.reduce((sum, share) => sum + share, 0);
 				const empty = Math.max(0, barWidth - used);
 				const bar = `${blocks.join("")}${empty ? palette.paint("dim", "░".repeat(empty)) : ""}`;
-				return node.label ? `${bar} ${palette.paint("muted", node.label)}` : bar;
+				const caption = node.label ? palette.paint("muted", node.label) : undefined;
+				const labels = node.segments.map((segment) => segment.label?.trim() ?? "");
+
+				// Fully labelled segments represent categories. Pack them into as many
+				// bounded rows as needed instead of truncating a single joined line.
+				if (labels.every((label) => label.length > 0)) {
+					const painted = node.segments.map((segment, index) =>
+						paintRich(palette, segment.color, segment.role, fallback, labels[index] ?? ""),
+					);
+					return [...packRichLabels(painted, contentWidth), ...(caption ? [caption] : [])];
+				}
+
+				if (!caption) return [bar];
+				return visibleWidth(bar) + 1 + visibleWidth(caption) <= contentWidth
+					? [`${bar} ${caption}`]
+					: [bar, caption];
 			}
 			case "progress": {
 				const percent =
@@ -816,10 +880,10 @@ function contributedRichNodes(
 						? String(node.current)
 						: `${node.current}/${node.total}${percent === undefined ? "" : ` (${percent}%)`}`;
 				const head = `${palette.paint(node.role ?? fallback, node.label)} ${amount}`;
-				return node.detail ? `${head} ${palette.paint("muted", node.detail)}` : head;
+				return [node.detail ? `${head} ${palette.paint("muted", node.detail)}` : head];
 			}
 			case "spacer":
-				return "";
+				return [""];
 		}
 	});
 }
@@ -828,11 +892,12 @@ function contributedContent(
 	panel: SidebarPanelData,
 	palette: AtelierPalette,
 	config: AtelierConfig,
+	contentWidth: number,
 ): string[] {
 	if (panel.rich) {
-		const collapsed = config.contributedPanelCollapsed[panel.id] === true;
+		const collapsed = panel.rich.collapsible === true && config.contributedPanelCollapsed[panel.id] === true;
 		const nodes = collapsed && panel.rich.compact ? panel.rich.compact : panel.rich.expanded;
-		const rendered = contributedRichNodes(nodes, panel, palette);
+		const rendered = contributedRichNodes(nodes, panel, palette, contentWidth);
 		if (rendered.some((row) => visibleWidth(row) > 0)) return rendered;
 	}
 	return contributedRows(panel, palette);
@@ -1375,7 +1440,7 @@ export function renderSidebarFrame(
 			ordered.push(...(grouped.get(entry.id) ?? []));
 		} else if (panel) {
 			availableVisible = true;
-			const rows = contributedContent(panel, palette, config);
+			const rows = contributedContent(panel, palette, config, panelContentWidth);
 			ordered.push({
 				name: `contributed:${panel.id}`,
 				panel: properCase(sanitize(panel.title)) || panel.id,
