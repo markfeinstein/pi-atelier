@@ -10,7 +10,7 @@
 - Port integration-only working labels and configurable Atelier color schemes onto the 0.12.1 display and configuration APIs.
 - Add live subagent lifecycle activity beside the existing cost graph, including restored async results and complete terminal, attention, timeout, detached, paused, and failure states.
 - Refine Sidebar labels and ordering by combining context with Usage and using scan-first Agent and Workspace summaries.
-- Add temporary Sidebar mouse interactions for panel-body and tool-name toggles during Resize mode.
+- Make complete Sidebar widget frames clickable for ordinary collapse/expand interaction, keep each collapsed widget's primary summary row inside a compact frame, retain row-specific actions such as tool-name toggles, and preserve temporary divider dragging in Resize mode.
 - Strip CSI, OSC, C1, and single-character terminal escapes from extension statuses before rendering.
 - Run packed-package checks reliably on Windows and npm 12, and require the packed file set to exactly match tracked `package.json.files` content.
 - Serialize global configuration patches with fresh reads and collision-safe publication, preventing simultaneous preferences or retired sessions from overwriting newer changes.

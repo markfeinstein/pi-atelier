@@ -108,16 +108,18 @@ describe("SGR mouse parsing", () => {
 });
 
 describe("temporary Resize mode", () => {
-	it("enables mouse reporting only during Resize mode", () => {
+	it("keeps mouse reporting active while the regular-mode Sidebar is visible", () => {
 		const h = resizeHarness();
-		expect(h.write).not.toHaveBeenCalled();
+		expect(h.write).toHaveBeenCalledExactlyOnceWith("\u001b[?1002h\u001b[?1006h");
 		expect(h.split.beginResize()).toBe(true);
-		expect(h.write).toHaveBeenCalledWith("\u001b[?1002h\u001b[?1006h");
 		expect(h.split.isResizing()).toBe(true);
 		h.split.finishResize();
-		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
+		expect(h.write).toHaveBeenCalledExactlyOnceWith("\u001b[?1002h\u001b[?1006h");
 		expect(h.unsubscribe).toHaveBeenCalledOnce();
 		expect(h.split.isResizing()).toBe(false);
+		h.split.hide();
+		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
+		expect(h.unsubscribe).toHaveBeenCalledTimes(2);
 	});
 	it("drags only from the divider and accepts on release", () => {
 		const h = resizeHarness();
@@ -130,10 +132,9 @@ describe("temporary Resize mode", () => {
 		expect(h.split.isResizing()).toBe(false);
 		expect(h.split.getSidebarWidth()).toBe(51);
 	});
-	it("clicks sidebar hit regions during temporary interaction mode", () => {
+	it("clicks sidebar hit regions during ordinary interaction", () => {
 		const h = resizeHarness();
 		h.split.setSidebarHitRegions([toolsRegion()]);
-		h.split.beginResize();
 		const sidebarStartX = 120 - DEFAULT_SIDEBAR_WIDTH + 1;
 
 		expect(h.send(press(sidebarStartX + 8, 4))).toEqual({ consume: true });
@@ -141,8 +142,8 @@ describe("temporary Resize mode", () => {
 
 		expect(h.onSidebarAction).toHaveBeenCalledOnce();
 		expect(h.onSidebarAction).toHaveBeenCalledWith({ type: "toggle-tool-names" });
-		expect(h.split.isResizing()).toBe(true);
-		expect(h.write).not.toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
+		expect(h.split.isResizing()).toBe(false);
+		expect(h.write).toHaveBeenCalledExactlyOnceWith("\u001b[?1002h\u001b[?1006h");
 	});
 	it("cancels pending clicks on motion outside the original hit region", () => {
 		const h = resizeHarness();
@@ -195,8 +196,9 @@ describe("temporary Resize mode", () => {
 		expect(listeners.size).toBe(1);
 		split.attach(stableTuiReference(() => renderer));
 		split.show();
-		expect(split.beginResize()).toBe(true);
 		expect(listeners.size).toBe(2);
+		expect(split.beginResize()).toBe(true);
+		expect(listeners.size).toBe(3);
 
 		const send = (data: string) =>
 			(renderer as unknown as { handleTerminalInput(data: string): void }).handleTerminalInput(data);
@@ -207,7 +209,7 @@ describe("temporary Resize mode", () => {
 
 		expect(split.getSidebarWidth()).toBe(51);
 		expect(split.isResizing()).toBe(false);
-		expect(listeners.size).toBe(1);
+		expect(listeners.size).toBe(2);
 	});
 	it("keeps fullscreen transcript wheel scrolling after Resize and sidebar visibility changes", () => {
 		let deliverInput: ((data: string) => void) | undefined;
@@ -256,7 +258,7 @@ describe("temporary Resize mode", () => {
 		renderer.stop();
 	});
 
-	it("temporarily manages mouse reporting for unsupported fullscreen renderers", () => {
+	it("owns visible-lifetime mouse reporting for unsupported fullscreen renderers", () => {
 		const renderer = new FullscreenRenderer();
 		const split = disposeAfterTest(createSplitPaneController({ subscribeInput: () => vi.fn() }));
 		split.attach(stableTuiReference(() => renderer as unknown as TUI));
@@ -264,14 +266,12 @@ describe("temporary Resize mode", () => {
 
 		expect(split.beginResize()).toBe(true);
 		split.finishResize();
-
-		expect(renderer.terminal.write.mock.calls).toEqual([
-			["\u001b[?1002h\u001b[?1006h"],
-			["\u001b[?1006l\u001b[?1002l"],
-		]);
+		expect(renderer.terminal.write.mock.calls).toEqual([["\u001b[?1002h\u001b[?1006h"]]);
+		split.hide();
+		expect(renderer.terminal.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
 	});
 
-	it("cleans mouse reporting on the renderer that entered Resize mode", () => {
+	it("cleans persistent mouse reporting on the renderer that showed the Sidebar", () => {
 		let renderer: TUI = new TuiMainScreen() as unknown as TUI;
 		const split = disposeAfterTest(createSplitPaneController({ subscribeInput: () => vi.fn() }));
 		split.attach(stableTuiReference(() => renderer));
@@ -284,6 +284,7 @@ describe("temporary Resize mode", () => {
 		const fullscreenRenderer = renderer as unknown as FullscreenRenderer;
 
 		split.finishResize();
+		split.hide();
 
 		expect(resizeRenderer.terminal.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
 		expect(fullscreenRenderer.terminal.write).not.toHaveBeenCalled();
@@ -357,7 +358,7 @@ describe("temporary Resize mode", () => {
 		h.split.beginResize();
 		h.split[action]();
 		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
-		expect(h.unsubscribe).toHaveBeenCalledOnce();
+		expect(h.unsubscribe).toHaveBeenCalledTimes(2);
 	});
 	it("attempts remaining cleanup when disabling mouse reporting throws", () => {
 		const h = resizeHarness();
@@ -379,33 +380,31 @@ describe("temporary Resize mode", () => {
 		h.split.beginResize();
 
 		expect(() => h.split.finishResize()).not.toThrow();
-		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
+		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1002h\u001b[?1006h");
 		expect(h.onResizeChange).toHaveBeenLastCalledWith(false);
 		expect(h.split.isResizing()).toBe(false);
 	});
-	it("cleans up before safely reporting begin errors", () => {
-		const h = resizeHarness();
+	it("cleans up before safely reporting persistent mouse enable errors", () => {
+		const h = harness();
 		const error = new Error("enable failed");
 		h.write.mockImplementationOnce(() => {
 			throw error;
 		});
+		const unsubscribe = vi.fn();
 		const onError = vi.fn(() => {
 			throw new Error("report failed");
 		});
 		const split = disposeAfterTest(
 			createSplitPaneController({
-				subscribeInput: () => h.unsubscribe,
-				onResizeChange: h.onResizeChange,
+				subscribeInput: () => unsubscribe,
 				onError,
 			}),
 		);
 		split.attach(h.tui);
-		split.show();
 
-		expect(() => split.beginResize()).not.toThrow();
+		expect(() => split.show()).not.toThrow();
 		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
-		expect(h.unsubscribe).toHaveBeenCalledOnce();
-		expect(h.onResizeChange).toHaveBeenLastCalledWith(false);
+		expect(unsubscribe).toHaveBeenCalledOnce();
 		expect(onError).toHaveBeenCalledWith(error);
 		expect(split.isResizing()).toBe(false);
 	});
@@ -417,7 +416,7 @@ describe("temporary Resize mode", () => {
 		h.split.beginResize();
 
 		expect(() => h.split.finishResize()).not.toThrow();
-		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
+		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1002h\u001b[?1006h");
 		expect(h.unsubscribe).toHaveBeenCalledOnce();
 		expect(h.split.isResizing()).toBe(false);
 	});
@@ -432,7 +431,7 @@ describe("temporary Resize mode", () => {
 		(h.tui.terminal as { columns: number }).columns = 91;
 		h.split.overlayOptions().visible?.(91, 36);
 		expect(h.split.isResizing()).toBe(false);
-		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
+		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1002h\u001b[?1006h");
 	});
 });
 

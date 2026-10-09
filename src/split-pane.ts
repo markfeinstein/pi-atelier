@@ -143,7 +143,9 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 	let dragging = false;
 	let pendingClickAction: SidebarAction | undefined;
 	let sidebarHitRegions: readonly SidebarHitRegion[] = [];
-	let unsubscribeInput: (() => void) | undefined;
+	let unsubscribeClickInput: (() => void) | undefined;
+	let unsubscribeResizeInput: (() => void) | undefined;
+	let clickMouseTerminal: TUI["terminal"] | undefined;
 	let resizeMouseTerminal: TUI["terminal"] | undefined;
 	let fullscreenSidebarComponent: Component | undefined;
 	let fullscreenSidebarHidden = false;
@@ -420,15 +422,15 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		adaptedTui[PI_084_FULLSCREEN_OVERLAY_ADAPTER] = undefined;
 	};
 
-	const prioritizeFullscreenResizeInput = (
+	const prioritizeFullscreenInput = (
 		handler: (data: string) => { consume?: boolean; data?: string } | undefined,
 	) => {
 		if (!isPiFullscreenRenderer()) return;
 		const listeners = (tui as unknown as { inputListeners?: Set<typeof handler> }).inputListeners;
 		if (!(listeners instanceof Set) || !listeners.delete(handler)) return;
 		// Pi 0.84's viewport listener consumes every mouse event for text selection.
-		// Put Resize first temporarily; unsubscribe removes it without disturbing
-		// the relative order of Pi's listener or other extension listeners.
+		// Put Sidebar input first; events outside an actionable region fall through
+		// unchanged to Pi's listener and other extension listeners.
 		const existingListeners = [...listeners];
 		listeners.clear();
 		listeners.add(handler);
@@ -498,20 +500,74 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		tui?.requestRender();
 	};
 
+	const handleSidebarClickInput = (data: string): { consume?: boolean; data?: string } | undefined => {
+		if (resizing) return undefined;
+		const mouse = parseSgrMouseEvent(data);
+		if (!mouse) return undefined;
+		if (mouse.release) {
+			if (!pendingClickAction) return clickMouseTerminal ? { consume: true } : undefined;
+			const releasedRegion = hitTestSidebar(mouse);
+			if (sameSidebarAction(pendingClickAction, releasedRegion?.action)) {
+				safely(() => options.onSidebarAction?.(pendingClickAction as SidebarAction));
+				requestRender();
+			}
+			pendingClickAction = undefined;
+			return { consume: true };
+		}
+		if (!mouse.motion && (mouse.button & 3) === 0 && (mouse.button & 64) === 0) {
+			const action = hitTestSidebar(mouse)?.action;
+			if (!action) return clickMouseTerminal ? { consume: true } : undefined;
+			pendingClickAction = action;
+			return { consume: true };
+		}
+		if (mouse.motion && pendingClickAction) {
+			const currentRegion = hitTestSidebar(mouse);
+			if (!sameSidebarAction(pendingClickAction, currentRegion?.action)) pendingClickAction = undefined;
+			return { consume: true };
+		}
+		return clickMouseTerminal ? { consume: true } : undefined;
+	};
+
+	const stopClickInput = () => {
+		const unsubscribe = unsubscribeClickInput;
+		const mouseTerminal = clickMouseTerminal;
+		unsubscribeClickInput = undefined;
+		clickMouseTerminal = undefined;
+		pendingClickAction = undefined;
+		if (mouseTerminal) safely(() => mouseTerminal.write(DISABLE_MOUSE));
+		if (unsubscribe) safely(unsubscribe);
+	};
+
+	const startClickInput = () => {
+		if (!enabled || disposed || resizing || !tui || unsubscribeClickInput || !options.subscribeInput) return;
+		try {
+			unsubscribeClickInput = options.subscribeInput(handleSidebarClickInput);
+			prioritizeFullscreenInput(handleSidebarClickInput);
+			if (!isPiFullscreenRenderer()) {
+				clickMouseTerminal = tui.terminal;
+				clickMouseTerminal.write(ENABLE_MOUSE);
+			}
+		} catch (error) {
+			stopClickInput();
+			safely(() => options.onError?.(error));
+		}
+	};
+
 	const stopResize = (restore: boolean) => {
-		if (!resizing && !resizeMouseTerminal && !unsubscribeInput) return;
+		if (!resizing && !resizeMouseTerminal && !unsubscribeResizeInput) return;
 		if (restore) sidebarWidth = resizeStartWidth;
 		syncOverlayWidth();
 		syncFullscreenLayoutAdapter();
 		const mouseTerminal = resizeMouseTerminal;
-		const unsubscribe = unsubscribeInput;
+		const unsubscribe = unsubscribeResizeInput;
 		dragging = false;
 		resizing = false;
 		resizeMouseTerminal = undefined;
-		unsubscribeInput = undefined;
+		unsubscribeResizeInput = undefined;
 		if (mouseTerminal) safely(() => mouseTerminal.write(DISABLE_MOUSE));
 		if (unsubscribe) safely(unsubscribe);
 		safely(() => options.onResizeChange?.(false));
+		startClickInput();
 		safely(requestRender);
 	};
 
@@ -544,6 +600,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		});
 		reconcileResizeWidth(nextTui.terminal.columns);
 		syncOverlayWidth(nextTui.terminal.columns);
+		startClickInput();
 		requestRender();
 	};
 
@@ -617,10 +674,12 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 			if (disposed || enabled) return;
 			enabled = true;
 			syncOverlayWidth();
+			startClickInput();
 			requestRender();
 		},
 		hide() {
 			stopResize(true);
+			stopClickInput();
 			if (!enabled) return;
 			enabled = false;
 			fullscreenSidebarComponent = undefined;
@@ -658,9 +717,9 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 			dragging = false;
 			resizing = true;
 			try {
-				unsubscribeInput = options.subscribeInput(handleResizeInput);
-				prioritizeFullscreenResizeInput(handleResizeInput);
-				resizeMouseTerminal = isPiFullscreenRenderer() ? undefined : tui.terminal;
+				unsubscribeResizeInput = options.subscribeInput(handleResizeInput);
+				prioritizeFullscreenInput(handleResizeInput);
+				resizeMouseTerminal = isPiFullscreenRenderer() || clickMouseTerminal ? undefined : tui.terminal;
 				resizeMouseTerminal?.write(ENABLE_MOUSE);
 				options.onResizeChange?.(true);
 				requestRender();
@@ -688,6 +747,7 @@ export function createSplitPaneController(options: SplitPaneControllerOptions = 
 		dispose() {
 			if (disposed) return;
 			stopResize(true);
+			stopClickInput();
 			disposed = true;
 			enabled = false;
 			fullscreenSidebarComponent = undefined;
