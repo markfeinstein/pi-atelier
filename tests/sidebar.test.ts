@@ -245,7 +245,7 @@ describe("sidebar snapshot and layout", () => {
 		expect(lines.every((line) => visibleWidth(line) <= 44)).toBe(true);
 		expect(lines.every((line) => stripAnsi(line).startsWith("  "))).toBe(true);
 		expect(lines.every((line) => !stripAnsi(line).startsWith("│ "))).toBe(true);
-		expect(text).toContain("╭─ ✦ pi-atelier ");
+		expect(text).toContain("╭─ ✦ Agent ");
 		expect(text).toContain("╭─ ✦ Usage ");
 		expect(text).toContain("╰────────────────");
 		expect(text).not.toContain("ATELIER");
@@ -310,21 +310,21 @@ describe("sidebar snapshot and layout", () => {
 		expect(compactRows).toContain("?2 · bin1 · sub1");
 	});
 
-	it("uses merged-panel space to retain useful Workspace detail", () => {
+	it("drops Session and optional Pulse detail before the Workspace identity and core summary", () => {
 		const rows = renderRows(snapshot(), { height: 27, color: false, now: 0 });
 
 		expect(rows).toContain("pi-atelier");
 		expect(rows).toContain("feature/sidebar ▲");
 		expect(rows).toContain("5 tracked  +182  −47");
-		expect(rows).toContain("2 untracked");
+		expect(rows).not.toContain("2 untracked");
 		expect(rows).not.toContain("Sidebar implementation");
 	});
 
 	it("pulses only the working Agent jewel while keeping other crowns stable", () => {
 		const bright = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 0).join("\n");
 		const soft = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 400).join("\n");
-		expect(bright).toContain("╭─ ✦ pi-atelier ");
-		expect(soft).toContain("╭─ ✧ pi-atelier ");
+		expect(bright).toContain("╭─ ✦ Agent ");
+		expect(soft).toContain("╭─ ✧ Agent ");
 		expect(bright).toContain("╭─ ✦ Usage ");
 		expect(soft).toContain("╭─ ✦ Usage ");
 	});
@@ -361,6 +361,9 @@ describe("sidebar snapshot and layout", () => {
 			  "feature/sidebar ▲",
 			  "5 tracked  +182  −47",
 			  "2 untracked",
+			  "",
+			  "",
+			  "Agent",
 			  "◆ Working · gitifying      gpt-5.6-sol",
 			  "OpenAI-Codex · Medium · Subscription",
 			  "",
@@ -382,9 +385,6 @@ describe("sidebar snapshot and layout", () => {
 			  "",
 			  "Tools",
 			  "Enabled                         8 / 12",
-			  "",
-			  "",
-			  "",
 			  "",
 			  "",
 			  "",
@@ -921,20 +921,20 @@ describe("sidebar snapshot and layout", () => {
 		expect(withoutSession).toContain("Tools");
 		expect(withoutSession).toContain("Usage");
 		expect(withoutSession).toContain("pi-atelier");
-		expect(withoutSession).toContain("Sidebar implementation");
+		expect(withoutSession).not.toContain("Sidebar implementation");
 
-		const withoutTools = renderRows(ranked, { height: 24, color: false, now: 20_000 });
+		const withoutTools = renderRows(ranked, { height: 28, color: false, now: 20_000 });
 		expect(withoutTools).not.toContain("Tools");
 		expect(withoutTools).toContain("Usage");
 		expect(withoutTools).toContain("pi-atelier");
 
-		const coreOnly = renderRows(ranked, { height: 18, color: false, now: 20_000 });
+		const coreOnly = renderRows(ranked, { height: 22, color: false, now: 20_000 });
 		expect(coreOnly).not.toContain("Tools");
 		expect(coreOnly).toContain("Usage");
 		expect(coreOnly).toContain("pi-atelier");
 		expect(coreOnly).toContain("5 tracked  +182  −47");
 		expect(coreOnly).not.toContain("Sidebar implementation");
-		expect(coreOnly).toContainEqual(expect.stringMatching(/^◆ Working/));
+		expect(coreOnly).toContain("Agent");
 		expect(coreOnly).toContain("Usage");
 	});
 
@@ -1135,8 +1135,8 @@ describe("sidebar snapshot and layout", () => {
 	it("keeps only the required hierarchy in a compact 12 row rail", () => {
 		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 12, false).join("\n");
 		expect(text).not.toContain("▛▀▜");
-		expect(text).toContain("pi-atelier");
-		expect(text).toContain("◆ Working");
+		expect(text).toContain("Agent");
+		expect(text).not.toContain("pi-atelier");
 		expect(text).not.toContain("Tools");
 		expect(text).not.toContain("tests passing");
 	});
