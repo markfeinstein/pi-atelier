@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Render rich contributed-panel bars with overflow-safe exact cell allocation, pack labelled categories across bounded rows, and ignore stale compact state when a producer disables collapsing.
 - Restore the quiet dot-separated footer composition with compact right-aligned telemetry, retain Nerd Font item icons, and replace the F6 default with Alt+A.
 - Add configurable status-rail placement with the complete bottom footer as the default and the composer-embedded ribbon retained as an option.
 - Port integration-only working labels and configurable Atelier color schemes onto the 0.12.1 display and configuration APIs.
