@@ -53,7 +53,7 @@ See the [font setup guide and Plain text preview](https://github.com/michaelmjhh
 - **Subagent costs:** colored per-child cost curves from pi-subagents accounting events, with matching legends and real observation markers. Open `/atelier` → **Subagent usage** (or `/atelier usage`) for a framed, larger graph, keyboard focus and individual reply costs. Kitty-compatible terminals display smooth native graphics; other terminals use text strokes.
 - **Session visibility:** model, thinking level, context, token usage, cost, and session details in a compact status rail and sidebar.
 - **Live activity:** agent, tool, and subagent lifecycle activity, including queued, running, detached, paused, attention, timeout, completion, and failure states.
-- **Workspace context:** a unified project-and-agent panel with workspace identity, active model state, read-only Git status, or Jujutsu workspace and last-snapshotted status.
+- **Workspace context:** a compact project-titled panel with workspace identity, read-only Git status, or Jujutsu workspace and last-snapshotted status; Agent model and activity remain independently configurable.
 - **Personalization:** display presets, configurable segments and panels, working labels, selectable or custom color schemes, optional Nerd Font icons, and model and tool controls.
 
 No telemetry or external network requests. See [Privacy](#privacy).

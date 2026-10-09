@@ -1343,11 +1343,6 @@ export function renderSidebarFrame(
 	const toolNameRows = layout.showToolNames ? activeToolNameRows(snapshot, panelContentWidth, palette) : [];
 	const workspace = workspaceRows(snapshot, panelContentWidth, palette, theme);
 	const workspacePanelTitle = sanitize(snapshot.projectName) || "Workspace";
-	const workspaceVisible =
-		config.sidebarPanelLayout.find((entry) => entry.id === "workspace")?.visible === true;
-	const agentVisible = config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible === true;
-	const mergeAgentIntoWorkspace = workspaceVisible && agentVisible;
-	const workspaceJewel = snapshot.activity === "working" && Math.floor(now / 400) % 2 === 1 ? "✧" : "✦";
 	const groups: SidebarGroup[] = [
 		...(resizing
 			? [
@@ -1360,60 +1355,11 @@ export function renderSidebarFrame(
 				]
 			: []),
 		{
-			name: "workspaceCore",
-			panel: "WORKSPACE",
-			panelTitle: workspacePanelTitle,
-			preservePanelTitleCase: true,
-			panelId: "workspace",
-			panelRole: snapshot.activity,
-			panelJewel: workspaceJewel,
-			rows: workspace.identity,
-			required: false,
-			dropRank: 30,
-		},
-		{
-			name: "workspaceMetadata",
-			panel: "WORKSPACE",
-			panelTitle: workspacePanelTitle,
-			preservePanelTitleCase: true,
-			panelId: "workspace",
-			panelRole: snapshot.activity,
-			panelJewel: workspaceJewel,
-			rows: workspace.metadata,
-			required: false,
-			dropRank: 30,
-		},
-		{
-			name: "workspaceDetails",
-			panel: "WORKSPACE",
-			panelTitle: workspacePanelTitle,
-			preservePanelTitleCase: true,
-			panelId: "workspace",
-			panelRole: snapshot.activity,
-			panelJewel: workspaceJewel,
-			rows: workspace.pulseDetails,
-			required: false,
-			dropRank: 6,
-		},
-		{
-			name: "workspaceSession",
-			panel: "WORKSPACE",
-			panelTitle: workspacePanelTitle,
-			preservePanelTitleCase: true,
-			panelId: "workspace",
-			panelRole: snapshot.activity,
-			panelJewel: workspaceJewel,
-			rows: workspace.session,
-			required: false,
-			dropRank: 4,
-		},
-		{
 			name: "agent",
-			panel: mergeAgentIntoWorkspace ? "WORKSPACE" : "AGENT",
-			...(mergeAgentIntoWorkspace ? { panelTitle: workspacePanelTitle, preservePanelTitleCase: true } : {}),
-			panelId: mergeAgentIntoWorkspace ? "workspace" : "agent",
+			panel: "AGENT",
+			panelId: "agent",
 			panelRole: snapshot.activity,
-			panelJewel: workspaceJewel,
+			panelJewel: snapshot.activity === "working" && Math.floor(now / 400) % 2 === 1 ? "✧" : "✦",
 			rows: agentRows(snapshot, panelContentWidth, palette, theme),
 			required: true,
 			dropRank: Number.POSITIVE_INFINITY,
@@ -1436,6 +1382,50 @@ export function renderSidebarFrame(
 			rows: todosRows(snapshot, palette),
 			required: false,
 			dropRank: 90,
+		},
+		{
+			name: "workspaceCore",
+			panel: "WORKSPACE",
+			panelTitle: workspacePanelTitle,
+			preservePanelTitleCase: true,
+			panelId: "workspace",
+			panelRole: "accent",
+			rows: workspace.identity,
+			required: false,
+			dropRank: 30,
+		},
+		{
+			name: "workspaceMetadata",
+			panel: "WORKSPACE",
+			panelTitle: workspacePanelTitle,
+			preservePanelTitleCase: true,
+			panelId: "workspace",
+			panelRole: "accent",
+			rows: workspace.metadata,
+			required: false,
+			dropRank: 30,
+		},
+		{
+			name: "workspaceDetails",
+			panel: "WORKSPACE",
+			panelTitle: workspacePanelTitle,
+			preservePanelTitleCase: true,
+			panelId: "workspace",
+			panelRole: "accent",
+			rows: workspace.pulseDetails,
+			required: false,
+			dropRank: 6,
+		},
+		{
+			name: "workspaceSession",
+			panel: "WORKSPACE",
+			panelTitle: workspacePanelTitle,
+			preservePanelTitleCase: true,
+			panelId: "workspace",
+			panelRole: "accent",
+			rows: workspace.session,
+			required: false,
+			dropRank: 4,
 		},
 		{
 			name: "usageContext",
