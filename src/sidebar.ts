@@ -134,7 +134,8 @@ function workspacePulseData(pulse: WorkspacePulseState): WorkspacePulseData | un
 
 export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapshot {
 	const pulseData = workspacePulseData(input.state.workspacePulse);
-	const projectName = basename(pulseData?.root ?? input.cwd) || pulseData?.root || input.cwd;
+	const projectName =
+		pulseData?.repositoryName ?? (basename(pulseData?.root ?? input.cwd) || pulseData?.root || input.cwd);
 	return {
 		...input.state,
 		projectName,
@@ -355,6 +356,7 @@ function workspacePulseRows(
 	if (pulse.status === "unavailable")
 		return { core: [palette.paint("warning", "Git unavailable")], details: [] };
 	if (!("data" in pulse)) return { core: [], details: [] };
+	if (pulse.data.bareRepository) return { core: [palette.paint("muted", "bare repository")], details: [] };
 	const git = pulse.data.snapshot;
 	if (pulse.status === "clean") return { core: [palette.paint("ready", "✓ clean")], details: [] };
 	const tracked = `${formatPulseCount(git.trackedFiles)} tracked`;
@@ -407,11 +409,14 @@ function workspaceRows(
 	const identity = branch ? `${project} ${palette.paint("dim", "·")} ${branch} ${gitState}` : project;
 	const identityRows = compact ? [project, ...(branch ? [`${branch} ${gitState}`] : [])] : [identity];
 	const pulseData = workspacePulseData(snapshot.workspacePulse);
-	const location = pulseData?.relativeCwd
-		? [palette.paint("muted", `./${sanitize(pulseData.relativeCwd)}`)]
-		: pulseData
-			? []
-			: [palette.paint("muted", shortPath(snapshot.cwd))];
+	const location = pulseData
+		? [
+				...(pulseData.worktreeName
+					? [palette.paint("muted", `worktree ${sanitize(pulseData.worktreeName)}`)]
+					: []),
+				...(pulseData.relativeCwd ? [palette.paint("muted", `./${sanitize(pulseData.relativeCwd)}`)] : []),
+			]
+		: [palette.paint("muted", shortPath(snapshot.cwd))];
 	const pulse = workspacePulseRows(snapshot.workspacePulse, compact, palette);
 	const sessionName = snapshot.sessionName ? sanitize(snapshot.sessionName) : "";
 	const session = [

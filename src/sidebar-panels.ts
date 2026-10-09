@@ -52,13 +52,13 @@ export const SIDEBAR_PANEL_MAX_REASON_CHARS = 160;
 
 /** Built-in panels remain available even when their optional content is empty. */
 export const BUILTIN_SIDEBAR_PANEL_IDS = [
+	"workspace",
 	"agent",
 	"activity",
 	"subagents",
 	"alerts",
 	"todos",
 	"usage",
-	"workspace",
 	"tools",
 ] as const;
 

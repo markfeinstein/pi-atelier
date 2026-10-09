@@ -26,13 +26,13 @@ describe("configuration validation", () => {
 		expect(DEFAULT_CONFIG.statusRailPlacement).toBe("footer");
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible).toBe(true);
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.map((entry) => entry.id)).toEqual([
+			"workspace",
 			"agent",
 			"activity",
 			"subagents",
 			"alerts",
 			"todos",
 			"usage",
-			"workspace",
 			"tools",
 		]);
 	});

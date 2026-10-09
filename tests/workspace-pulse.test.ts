@@ -1,7 +1,7 @@
 import { disposeAfterTest } from "./helpers/cleanup.js";
 import { deferred, settleMicrotasks } from "./helpers/async.js";
 import { getEventListeners } from "node:events";
-import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -269,6 +269,57 @@ describe("inspectWorkspacePulse", () => {
 				conflicts: 0,
 			},
 		});
+	});
+
+	it("uses the shared repository identity for a linked worktree", async () => {
+		const container = mkdtempSync(join(tmpdir(), "atelier-worktree-"));
+		const repository = join(container, "project");
+		const worktree = join(container, "feature-checkout");
+		mkdirSync(worktree);
+		writeFileSync(join(worktree, ".git"), `gitdir: ${join(repository, ".git", "worktrees", "feature")}\n`);
+		const exec = vi
+			.fn()
+			.mockResolvedValueOnce(result(`true\n${worktree}\n`))
+			.mockResolvedValueOnce(result("# branch.oid abc\0# branch.head feature/worktrees\0"));
+		try {
+			await expect(inspectWorkspacePulse({ exec, cwd: worktree })).resolves.toMatchObject({
+				kind: "available",
+				root: worktree,
+				repositoryName: "project",
+				worktreeName: "feature-checkout",
+				branch: "feature/worktrees",
+			});
+		} finally {
+			rmSync(container, { recursive: true, force: true });
+		}
+	});
+
+	it("reports a bare repository without attempting worktree status", async () => {
+		const exec = vi
+			.fn()
+			.mockResolvedValueOnce(result("", 128, "fatal: this operation must be run in a work tree"))
+			.mockResolvedValueOnce(result("true\n/repositories/project/.git\n"))
+			.mockResolvedValueOnce(result("main\n"));
+
+		await expect(inspectWorkspacePulse({ exec, cwd: "/repositories/project" })).resolves.toEqual({
+			kind: "available",
+			root: "/repositories/project/.git",
+			repositoryName: "project",
+			bareRepository: true,
+			relativeCwd: "",
+			branch: "main",
+			snapshot: {
+				trackedFiles: 0,
+				untrackedFiles: 0,
+				linesAdded: 0,
+				linesRemoved: 0,
+				binaryFiles: 0,
+				submodules: 0,
+				conflicts: 0,
+			},
+		});
+		expect(exec).toHaveBeenCalledTimes(3);
+		expect(exec.mock.calls.some(([, args]) => args.includes("status"))).toBe(false);
 	});
 
 	it.each([

@@ -529,13 +529,13 @@ describe("extension registration", () => {
 				);
 				expect(patch.sidebarPanelLayout?.map((entry) => entry.id)).toEqual([
 					"vendor:missing",
+					"workspace",
 					"agent",
 					"activity",
 					"subagents",
 					"alerts",
 					"todos",
 					"usage",
-					"workspace",
 					"tools",
 					"vendor:queue",
 				]);

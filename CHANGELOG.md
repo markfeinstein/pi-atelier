@@ -2,6 +2,7 @@
 
 ## Unreleased
 
+- Lead the default Sidebar with Workspace, identify linked Git worktrees by their shared repository, and represent bare repositories without attempting worktree-only status commands.
 - Render rich contributed-panel bars with overflow-safe exact cell allocation, pack labelled categories across bounded rows, and ignore stale compact state when a producer disables collapsing.
 - Restore the quiet dot-separated footer composition with compact right-aligned telemetry, retain Nerd Font item icons, and replace the F6 default with Alt+A.
 - Add configurable status-rail placement with the complete bottom footer as the default and the composer-embedded ribbon retained as an option.
