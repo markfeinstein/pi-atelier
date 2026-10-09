@@ -230,8 +230,7 @@ function panelRows(
 	const innerWidth = Math.max(0, safeWidth - 4);
 	const sanitizedTitle = sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS);
 	const safeTitle = preserveTitleCase ? sanitizedTitle : properCase(sanitizedTitle);
-	const stateMarker = collapsed ? "▸" : "▾";
-	const crownPrefix = `╭─ ${jewel} ${stateMarker} `;
+	const crownPrefix = `╭─ ${jewel} `;
 	const crownFill = "─".repeat(
 		Math.max(0, safeWidth - visibleWidth(crownPrefix) - visibleWidth(safeTitle) - 2),
 	);
@@ -618,7 +617,6 @@ function toolsStatusRows(snapshot: SidebarSnapshot, width: number, palette: Atel
 }
 
 function mcpServerRows(snapshot: SidebarSnapshot, width: number, palette: AtelierPalette): string[] {
-	if (snapshot.mcpServers.length === 0) return [palette.paint("dim", "No connected servers")];
 	return snapshot.mcpServers.map((server) =>
 		labeledRow(
 			`● ${server.name}`,
@@ -1383,6 +1381,7 @@ export function renderSidebarFrame(
 	const collapsedPanelIds = options.collapsedPanelIds ?? new Set<string>();
 	const chartGraphics = options.chartGraphics ?? {};
 	const toolNameRows = layout.showToolNames ? activeToolNameRows(snapshot, panelContentWidth, palette) : [];
+	const mcpRows = mcpServerRows(snapshot, panelContentWidth, palette);
 	const workspace = workspaceRows(snapshot, panelContentWidth, palette, theme);
 	const workspacePanelTitle = sanitize(snapshot.projectName) || "Workspace";
 	const groups: SidebarGroup[] = [
@@ -1510,16 +1509,20 @@ export function renderSidebarFrame(
 			required: false,
 			dropRank: (rows.length - index) / 100,
 		})),
-		{
-			name: "mcpServers",
-			panel: "MCP SERVERS",
-			preservePanelTitleCase: true,
-			panelId: "mcp",
-			panelRole: "ready",
-			rows: mcpServerRows(snapshot, panelContentWidth, palette),
-			required: false,
-			dropRank: 8,
-		},
+		...(mcpRows.length > 0
+			? [
+					{
+						name: "mcpServers",
+						panel: "MCP SERVERS",
+						preservePanelTitleCase: true,
+						panelId: "mcp",
+						panelRole: "ready" as const,
+						rows: mcpRows,
+						required: false,
+						dropRank: 8,
+					},
+				]
+			: []),
 	];
 
 	// Keep panel content grouped while making the user-owned order the only
@@ -1543,7 +1546,7 @@ export function renderSidebarFrame(
 			entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number],
 		);
 		const panel = isSidebarPanelContributionId(entry.id) ? contributed.get(entry.id) : undefined;
-		if (builtin) {
+		if (builtin && (entry.id !== "mcp" || grouped.has(entry.id))) {
 			availableVisible = true;
 			ordered.push(...(grouped.get(entry.id) ?? []));
 		} else if (panel) {
