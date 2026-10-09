@@ -18,7 +18,7 @@ const git = (...args) => execFileSync("git", args, { cwd: root, encoding: "utf8"
 const revision = args[1] ? git("rev-parse", "--verify", `${args[1]}^{commit}`) : undefined;
 const directory = fs.mkdtempSync(path.join(os.tmpdir(), "atelier-sidebar-bench-"));
 const load = (file) => import(pathToFileURL(path.join(directory, "src", file)).href);
-const round = (number) => Number(number.toFixed(4));
+const round = (number, decimals = 4) => Number(number.toFixed(decimals));
 
 try {
 	fs.writeFileSync(path.join(directory, "package.json"), '{"type":"module"}');
@@ -38,7 +38,7 @@ try {
 			}).outputText,
 		);
 	}
-	const { buildSidebarSnapshot, renderSidebarLines } = await load("sidebar.js");
+	const { buildSidebarSnapshot, createSidebarComponent, renderSidebarLines } = await load("sidebar.js");
 	const { createInertAtelierState } = await load("state.js");
 	const { DEFAULT_CONFIG } = await load("types.js");
 	const theme = { name: "dark", fg: (_role, text) => text, bold: (text) => text, italic: (text) => text };
@@ -50,7 +50,9 @@ try {
 		height: 40,
 		warmups: 3,
 		samples: 10,
+		cachedIterationsPerSample: 1_000,
 		rendering: [],
+		cachedRendering: [],
 	};
 	for (const count of [0, 8, 64]) {
 		const panels = Array.from({ length: count }, (_, index) => ({
@@ -91,7 +93,33 @@ try {
 			medianMs: round((sorted[4] + sorted[5]) / 2),
 			minMs: round(sorted[0]),
 			maxMs: round(sorted.at(-1)),
-			samplesMs: samples.map(round),
+			samplesMs: samples.map((sample) => round(sample)),
+		});
+
+		const component = createSidebarComponent({
+			getSnapshot: () => snapshot,
+			getConfig: () => config,
+			getHeight: () => results.height,
+			getRevision: () => 0,
+			theme,
+			colorEnabled: false,
+		});
+		component.render(results.width);
+		const cachedSamples = [];
+		for (let sample = 0; sample < results.samples; sample++) {
+			const start = performance.now();
+			for (let index = 0; index < results.cachedIterationsPerSample; index++) {
+				component.render(results.width);
+			}
+			cachedSamples.push((performance.now() - start) / results.cachedIterationsPerSample);
+		}
+		const sortedCached = [...cachedSamples].sort((a, b) => a - b);
+		results.cachedRendering.push({
+			panels: count,
+			medianMs: round((sortedCached[4] + sortedCached[5]) / 2, 6),
+			minMs: round(sortedCached[0], 6),
+			maxMs: round(sortedCached.at(-1), 6),
+			samplesMs: cachedSamples.map((sample) => round(sample, 6)),
 		});
 	}
 	console.log(JSON.stringify(results, null, 2));

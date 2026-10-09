@@ -542,6 +542,29 @@ describe("footer", () => {
 		expect(lightDanger).toContain(`${darkRgb.red}90.0%\u001b[39m`);
 	});
 
+	it("labels warning and danger context explicitly when color is disabled", () => {
+		const warning = stripAnsi(
+			renderFooterLine(
+				{ ...state, metrics: { ...state.metrics, contextPercent: 70 } },
+				DEFAULT_CONFIG,
+				plainTheme,
+				180,
+				false,
+			),
+		);
+		const danger = stripAnsi(
+			renderFooterLine(
+				{ ...state, metrics: { ...state.metrics, contextPercent: 90 } },
+				DEFAULT_CONFIG,
+				plainTheme,
+				180,
+				false,
+			),
+		);
+		expect(warning).toContain("WARN 70.0%");
+		expect(danger).toContain("DANGER 90.0%");
+	});
+
 	it("keeps unavailable values dim instead of category-colored", () => {
 		const line = renderFooterLine(
 			{

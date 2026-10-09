@@ -67,10 +67,11 @@ Open `/atelier` or press **Alt+A** to change display settings, control the sideb
 /atelier sidebar            # toggle sidebar
 /atelier sidebar on|off     # set sidebar visibility
 /atelier sidebar tools      # toggle tool names
+/atelier sidebar panel <id> [toggle|open|closed]
 /atelier enable|disable     # set extension state
 ```
 
-The sidebar starts visible and hides when the terminal is too narrow. Click any visible widget frame to collapse or expand its body; collapsed widgets retain their primary summary row in a compact frame, and the Tools disclosure row still toggles tool names. Press `Ctrl+Shift+R` to resize the sidebar by mouse or keyboard. In regular terminal mode, Atelier enables mouse reporting while the sidebar is visible, so use the terminal's mouse-bypass modifier—typically Shift—for native text selection. Fullscreen mouse events outside actionable Sidebar regions continue to Pi's viewport. The TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
+The sidebar starts visible and hides when the terminal is too narrow. Click any visible widget frame to collapse or expand its body, or use `/atelier sidebar panel <id> toggle` for keyboard access. Panel crowns show `▾` when expanded and `▸` when collapsed; collapsed widgets retain their primary summary row in a compact frame, and the Tools disclosure row still toggles tool names. When terminal height hides complete panels, the sidebar reports how many were omitted and points to `/atelier display`, where every configured panel remains available. Press `Ctrl+Shift+R` to resize the sidebar by mouse or keyboard. In regular terminal mode, Atelier enables mouse reporting while the sidebar is visible, so use the terminal's mouse-bypass modifier—typically Shift—for native text selection. Fullscreen mouse events outside actionable Sidebar regions continue to Pi's viewport. The TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
 
 The Subagents panel combines the existing cost view with live `pi-subagents` lifecycle activity. It restores current-session async results after reload and keeps terminal runs in the recent list for ten minutes.
 
@@ -133,7 +134,7 @@ Extension statuses are sanitized before rendering, including CSI, OSC, C1, and s
 
 Extensions can publish presentation-only panels over Pi's local event bus with `registerSidebarPanel`. Protocol-v1 `rows` remain mandatory and work unchanged. Producers may additionally provide flat rich nodes for text, spans, key/value rows, headings, bars, progress, and spacing, with optional compact content. Atelier applies shared aggregate budgets across expanded and compact content, including nested items, raw input, and sanitized output; strips terminal control sequences; accepts literal colors only as `#RRGGBB`; and rejects malformed roles, colors, numbers, optional fields, or non-finite values. Rich content has no callbacks, actions, arbitrary ANSI, or nesting, and invalid rich data falls back wholly to legacy rows.
 
-Contributed panels do not add network access. Producers may publish `{ available: false, reason }`; the bounded, sanitized descriptor remains identifiable in Settings while registered but does not render, and disappears on unregister. Mouse panel interactions remain available only during Sidebar Resize mode.
+Contributed panels do not add network access. Producers may publish `{ available: false, reason }`; the bounded, sanitized descriptor remains identifiable in Settings while registered but does not render, and disappears on unregister. Visible contributed-panel frames support the same ordinary collapse and expand clicks and `/atelier sidebar panel <id>` keyboard commands as built-in panels; Resize mode additionally enables divider dragging.
 
 ## Troubleshooting
 

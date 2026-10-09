@@ -38,6 +38,7 @@ import {
 	BUILTIN_SIDEBAR_PANEL_IDS,
 	createSidebarPanelRegistry,
 	isSidebarPanelContributionId,
+	isSidebarPanelId,
 	type SidebarPanelRegistry,
 } from "../src/sidebar-panels.js";
 import { AtelierRuntime, createInertAtelierState } from "../src/state.js";
@@ -254,16 +255,21 @@ export default function atelierExtension(
 		};
 	}
 
-	function updateExtensionStatuses(targetSession: ActiveSession, next: readonly string[]): void {
-		if (activeSession !== targetSession) return;
+	function updateExtensionStatuses(
+		targetSession: ActiveSession,
+		next: readonly string[],
+		requestRender = true,
+	): boolean {
+		if (activeSession !== targetSession) return false;
 		if (
 			next.length === targetSession.extensionStatuses.length &&
 			next.every((status, index) => status === targetSession.extensionStatuses[index])
 		) {
-			return;
+			return false;
 		}
 		targetSession.extensionStatuses = [...next];
-		targetSession.sidebar.requestRender();
+		if (requestRender) targetSession.sidebar.requestRender();
+		return true;
 	}
 
 	const VALID_TODO_STATUSES = new Set(["pending", "in_progress", "completed"]);
@@ -672,6 +678,7 @@ export default function atelierExtension(
 		let footer: AtelierFooterComponent | undefined;
 		let headerRendered = false;
 		let editorInstalled = false;
+		let extensionStatusRenderQueued = false;
 		const getCurrentSession = (): ActiveSession | undefined => {
 			const current = activeSession;
 			return enabled && current?.token === token && current.footerGeneration === generation
@@ -690,7 +697,18 @@ export default function atelierExtension(
 					const currentSession = getCurrentSession();
 					if (!currentSession) return retiredState;
 					const branch = footerData.getGitBranch();
-					updateExtensionStatuses(currentSession, Array.from(footerData.getExtensionStatuses().values()));
+					const statusChanged = updateExtensionStatuses(
+						currentSession,
+						Array.from(footerData.getExtensionStatuses().values()),
+						false,
+					);
+					if (statusChanged && !extensionStatusRenderQueued) {
+						extensionStatusRenderQueued = true;
+						queueMicrotask(() => {
+							extensionStatusRenderQueued = false;
+							getCurrentSession()?.sidebar.requestRender();
+						});
+					}
 					const performance = currentSession.runActivity.getSnapshot().performance;
 					const composerPlacement = currentSession.runtime.getConfig().statusRailPlacement === "composer";
 					return {
@@ -807,6 +825,34 @@ export default function atelierExtension(
 					ctx.ui.notify("Enable Pi Atelier with /atelier enable before showing its sidebar", "info");
 					return;
 				}
+				if (sidebarAction === "panel") {
+					const [panelId, panelAction = "toggle", ...panelExtra] = extra;
+					if (
+						panelExtra.length > 0 ||
+						!panelId ||
+						!isSidebarPanelId(panelId) ||
+						!(["toggle", "open", "closed"] as const).includes(panelAction as "toggle" | "open" | "closed")
+					) {
+						ctx.ui.notify("Usage: /atelier sidebar panel <id> [toggle|open|closed]", "warning");
+						return;
+					}
+					const panelVisible = current.runtime
+						.getConfig()
+						.sidebarPanelLayout.some((entry) => entry.id === panelId && entry.visible);
+					const panelAvailable =
+						BUILTIN_SIDEBAR_PANEL_IDS.includes(panelId as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number]) ||
+						current.panelRegistry.get(panelId) !== undefined;
+					if (!panelVisible || !panelAvailable) {
+						ctx.ui.notify(`Sidebar panel ${panelId} is not currently visible`, "warning");
+						return;
+					}
+					const collapsed = current.sidebar.setPanelCollapsed(
+						panelId,
+						panelAction === "open" ? false : panelAction === "closed" ? true : undefined,
+					);
+					ctx.ui.notify(`Sidebar panel ${panelId} ${collapsed ? "collapsed" : "expanded"}`, "info");
+					return;
+				}
 				if (sidebarAction === "tools") {
 					const [toolAction, ...toolExtra] = extra;
 					if (
@@ -823,7 +869,10 @@ export default function atelierExtension(
 					extra.length > 0 ||
 					(sidebarAction !== undefined && sidebarAction !== "on" && sidebarAction !== "off")
 				) {
-					ctx.ui.notify("Usage: /atelier sidebar [on|off]", "warning");
+					ctx.ui.notify(
+						"Usage: /atelier sidebar [on|off|tools [on|off]|panel <id> [toggle|open|closed]]",
+						"warning",
+					);
 					return;
 				}
 				if (sidebarAction === "on") current.sidebar.show();
