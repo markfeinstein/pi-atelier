@@ -25,6 +25,7 @@ import {
 	openAtelierControlCenter,
 	openDisplaySettingsWorkspace,
 } from "../src/menu.js";
+import { summarizeMcpServers } from "../src/mcp-servers.js";
 import { isColorEnabled } from "../src/palette.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
 import type { SidebarPanelSetting } from "../src/settings-workspace.js";
@@ -366,6 +367,7 @@ export default function atelierExtension(
 		const sessionName = ctx.sessionManager.getSessionName();
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		const activeTools = pi.getActiveTools();
+		const allTools = pi.getAllTools();
 		return buildSidebarSnapshot({
 			state: runtime.getState(),
 			cwd: ctx.cwd,
@@ -373,8 +375,9 @@ export default function atelierExtension(
 			...(sessionFile ? { sessionFile } : {}),
 			branchEntryCount: ctx.sessionManager.getBranch().length,
 			activeToolCount: activeTools.length,
-			availableToolCount: pi.getAllTools().length,
+			availableToolCount: allTools.length,
 			activeToolNames: activeTools,
+			mcpServers: summarizeMcpServers(allTools),
 			extensionStatuses: targetSession.extensionStatuses,
 			runActivity: runActivity.getSnapshot(),
 			subagents: targetSession.subagentActivity.getSnapshot(),

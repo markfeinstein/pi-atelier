@@ -3,6 +3,7 @@
 ## Unreleased
 
 - Add keyboard-accessible Sidebar panel collapse commands, explicit expanded/collapsed crowns, height-compaction notices, cached unchanged frames and non-color context severity labels; defer extension-status redraws outside footer rendering and align contributed-panel interaction documentation with runtime behavior.
+- Add a visible-by-default MCP Servers sidebar widget that lists connected server namespaces and exposed tool counts from Pi's public tool registry.
 - Keep Agent independently configurable while compacting the project-titled Workspace panel: omit redundant non-repository and synthetic session messaging, pack VCS state responsively, show only an existing native Pi session name, add local Git ahead/behind counts, and inspect Jujutsu workspace/bookmark/change and dirty/conflict state without snapshotting it.
 - Lead the default Sidebar with Workspace, identify linked Git worktrees by their shared repository, and represent bare repositories without attempting worktree-only status commands.
 - Render rich contributed-panel bars with overflow-safe exact cell allocation, pack labelled categories across bounded rows, and ignore stale compact state when a producer disables collapsing.

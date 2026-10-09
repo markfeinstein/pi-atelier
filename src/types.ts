@@ -28,7 +28,8 @@ export type BuiltinSidebarPanelId =
 	| "todos"
 	| "workspace"
 	| "usage"
-	| "tools";
+	| "tools"
+	| "mcp";
 /** Stable namespaced IDs are used by contributed panels. */
 export type ContributedSidebarPanelId = `${string}:${string}`;
 /** Configuration may retain built-ins and unavailable contributed panels. */

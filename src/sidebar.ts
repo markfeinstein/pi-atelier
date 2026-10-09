@@ -4,6 +4,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type Component, type OverlayHandle, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { ThemeLike } from "./footer.js";
 import { hasCapturingOverlay } from "./image-compositor.js";
+import type { McpServerSummary } from "./mcp-servers.js";
 import { aggregateMetrics, formatTokens } from "./metrics.js";
 import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.js";
 import {
@@ -105,6 +106,7 @@ export interface SidebarSnapshotInput {
 	activeToolCount: number;
 	availableToolCount: number;
 	activeToolNames?: readonly string[];
+	mcpServers?: readonly McpServerSummary[];
 	extensionStatuses: readonly string[];
 	runActivity?: RunActivitySnapshot;
 	subagents?: SubagentActivitySnapshot;
@@ -122,6 +124,7 @@ export interface SidebarSnapshot extends AtelierState {
 	activeToolCount: number;
 	availableToolCount: number;
 	activeToolNames: readonly string[];
+	mcpServers: readonly McpServerSummary[];
 	runActivity: RunActivitySnapshot;
 	subagents: SubagentActivitySnapshot;
 	todos: readonly NormalizedTodo[];
@@ -149,6 +152,7 @@ export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapsh
 		activeToolNames: [...new Set((input.activeToolNames ?? []).map(sanitize).filter(Boolean))].sort((a, b) =>
 			a.localeCompare(b, "en"),
 		),
+		mcpServers: (input.mcpServers ?? []).map((server) => ({ ...server })),
 		extensionStatuses: input.extensionStatuses,
 		runActivity: input.runActivity ?? EMPTY_RUN_ACTIVITY,
 		subagents: input.subagents ?? EMPTY_SUBAGENT_ACTIVITY,
@@ -611,6 +615,19 @@ function toolsStatusRows(snapshot: SidebarSnapshot, width: number, palette: Atel
 			palette,
 		),
 	];
+}
+
+function mcpServerRows(snapshot: SidebarSnapshot, width: number, palette: AtelierPalette): string[] {
+	if (snapshot.mcpServers.length === 0) return [palette.paint("dim", "No connected servers")];
+	return snapshot.mcpServers.map((server) =>
+		labeledRow(
+			`● ${server.name}`,
+			`${finiteCount(server.toolCount)} ${server.toolCount === 1 ? "tool" : "tools"}`,
+			width,
+			palette,
+			"ready",
+		),
+	);
 }
 
 function activeToolNameRows(
@@ -1493,6 +1510,16 @@ export function renderSidebarFrame(
 			required: false,
 			dropRank: (rows.length - index) / 100,
 		})),
+		{
+			name: "mcpServers",
+			panel: "MCP SERVERS",
+			preservePanelTitleCase: true,
+			panelId: "mcp",
+			panelRole: "ready",
+			rows: mcpServerRows(snapshot, panelContentWidth, palette),
+			required: false,
+			dropRank: 8,
+		},
 	];
 
 	// Keep panel content grouped while making the user-owned order the only
