@@ -1,9 +1,12 @@
 import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import { applyDisplayTemplate } from "./display.js";
 import type { PaletteRole } from "./palette.js";
+import type { PrefillView } from "./prefill.js";
 import { DEFAULT_SIDEBAR_PANEL_LAYOUT } from "./sidebar-panels.js";
 import type { SubagentUsageSnapshot } from "./subagent-usage.js";
 import type { WorkspacePulseData } from "./workspace-pulse.js";
+
+export type { PrefillView } from "./prefill.js";
 
 export type TemplateName = "editorial" | "minimal" | "classic";
 export type PresetName = TemplateName | "custom";
@@ -28,6 +31,7 @@ export type BuiltinSidebarPanelId =
 	| "todos"
 	| "workspace"
 	| "usage"
+	| "prefill"
 	| "tools"
 	| "mcp";
 /** Stable namespaced IDs are used by contributed panels. */
@@ -127,6 +131,10 @@ export interface AtelierConfig extends DisplaySettings {
 	/** Atelier-owned rich contributed-panel collapse state, keyed by panel ID. */
 	contributedPanelCollapsed: Record<string, boolean>;
 	completionNotifications: boolean;
+	prefillEnabled: boolean;
+	prefillViews: readonly PrefillView[];
+	/** Providers that may receive the non-standard `return_progress` request field. */
+	prefillProviders: readonly string[];
 	/** Omitted uses the built-in playful phrases; `false` disables them; a list overrides them. */
 	workingLabels?: readonly string[] | false;
 	colorScheme: AtelierColorScheme;
@@ -186,6 +194,9 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	sidebarPanelLayout: DEFAULT_SIDEBAR_PANEL_LAYOUT.map((entry) => ({ ...entry })),
 	contributedPanelCollapsed: {},
 	completionNotifications: true,
+	prefillEnabled: true,
+	prefillViews: ["percent", "tokens", "eta"],
+	prefillProviders: ["llama.cpp"],
 	colorScheme: "atelier",
 	statusRailPlacement: "footer",
 };

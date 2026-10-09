@@ -55,6 +55,8 @@ See the [font setup guide and Plain text preview](https://github.com/michaelmjhh
 - **Live activity:** agent, tool, and subagent lifecycle activity, including queued, running, detached, paused, attention, timeout, completion, and failure states.
 - **MCP visibility:** connected MCP server namespaces and their exposed tool counts, derived from Pi's public tool registry; the widget stays hidden when no connected server tools are attached.
 - **Workspace context:** a compact project-titled panel with workspace identity, read-only Git status, or Jujutsu workspace and last-snapshotted status; Agent model and activity remain independently configurable.
+- **Local-model prefill:** an optional transient Sidebar panel shows uncached prompt progress and first-token ETA from allow-listed providers on Pi 0.99 or newer.
+- **Prompt copy:** an unmodified single click copies a complete fullscreen user prompt on Pi hosts with component mouse dispatch, while links and drag selection remain host-owned.
 - **Personalization:** display presets, configurable segments and panels, working labels, selectable or custom color schemes, optional Nerd Font icons, and model and tool controls.
 
 No telemetry or external network requests. See [Privacy](#privacy).
@@ -75,6 +77,14 @@ Open `/atelier` or press **Alt+A** to change display settings, control the sideb
 The sidebar starts visible and hides when the terminal is too narrow. Click any visible widget frame to collapse or expand its body, or use `/atelier sidebar panel <id> toggle` for keyboard access. Collapsed widgets retain their primary summary row in a compact frame, and the Tools disclosure row still toggles tool names. When terminal height hides complete panels, the sidebar reports how many were omitted and points to `/atelier display`, where every configured panel remains available. Press `Ctrl+Shift+R` to resize the sidebar by mouse or keyboard. In regular terminal mode, Atelier enables mouse reporting while the sidebar is visible, so use the terminal's mouse-bypass modifier—typically Shift—for native text selection. Fullscreen mouse events outside actionable Sidebar regions continue to Pi's viewport. The TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
 
 The Subagents panel combines the existing cost view with live `pi-subagents` lifecycle activity. It restores current-session async results after reload and keeps terminal runs in the recent list for ten minutes.
+
+### Local-model prefill progress
+
+On Pi 0.99 or newer, Atelier can ask allow-listed `openai-completions` providers for `prompt_progress` stream events. While a local model reads a significant uncached prompt, a temporary **PREFILL** panel shows completion, token counts, and first-token ETA. It disappears when generation starts. The default allow-list contains only `llama.cpp`; providers that reject the extra request field are skipped for the rest of the session.
+
+### Copy user prompts
+
+In fullscreen mode on Pi hosts with component mouse dispatch, single left-click a user message to copy its complete original prompt, preserving Markdown, newlines, and Unicode. Drag selection, links, modifier clicks, assistant messages, tool output, and composer input retain their normal behavior. `/atelier disable` and session teardown restore the previous host handler. Older Pi versions remain unaffected.
 
 Choose a status rail preset in the display settings:
 
@@ -102,7 +112,7 @@ Trusted project configuration:
 <project>/.pi/pi-atelier.json
 ```
 
-Project settings override user settings. Session changes override both. Global font mode, sidebar startup, and notification preferences remain user-only.
+Project settings override user settings. Session changes override both. Global font mode, sidebar startup, notification, prefill enablement, and prefill provider preferences remain user-only.
 
 ```json
 {
@@ -115,6 +125,9 @@ Project settings override user settings. Session changes override both. Global f
   "showSidebarOnStartup": true,
   "showSidebarToolNames": false,
   "completionNotifications": true,
+  "prefillEnabled": true,
+  "prefillViews": ["percent", "tokens", "eta"],
+  "prefillProviders": ["llama.cpp"],
   "statusRailPlacement": "footer",
   "workingLabels": ["THINKING", "WORKING", "PROCESSING"],
   "colorScheme": "atelier"
@@ -155,6 +168,7 @@ Pi Atelier:
 - Does not read untracked file contents
 - Reads project configuration only for trusted projects
 - Does not include prompts or responses in notifications
+- Adds `return_progress` only to requests for user-allow-listed `openai-completions` providers; progress remains in memory and is discarded when generation starts or the run settles
 - Reads connected MCP server namespaces and tool counts only from Pi's public in-memory tool registry; it does not read MCP configuration, logs, or credentials
 - Accepts contributed sidebar presentation data only through Pi's local event bus; contributors receive no Atelier network or credential access
 

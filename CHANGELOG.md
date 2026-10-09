@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Show allow-listed local-model prompt prefill progress, uncached token counts, and first-token ETA in a transient Sidebar panel on Pi 0.99 or newer.
+- Copy a fullscreen user prompt with an unmodified single left click while preserving host-owned links, drag selection, modifier clicks, composer input, and lifecycle restoration.
 - Add keyboard-accessible Sidebar panel collapse commands, explicit expanded/collapsed crowns, height-compaction notices, cached unchanged frames and non-color context severity labels; defer extension-status redraws outside footer rendering and align contributed-panel interaction documentation with runtime behavior.
 - Add a visible-by-default MCP Servers sidebar widget that lists connected server namespaces and exposed tool counts from Pi's public tool registry, while staying hidden when no connected server tools are attached.
 - Keep widget crowns visually quiet without expanded/collapsed arrow markers while retaining mouse and command-based collapse controls.
