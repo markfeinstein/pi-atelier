@@ -70,7 +70,7 @@ Open `/atelier` or press **Alt+A** to change display settings, control the sideb
 /atelier enable|disable     # set extension state
 ```
 
-The sidebar starts visible and hides when the terminal is too narrow. Press `Ctrl+Shift+R` to resize it. While Resize mode is active, click a panel crown to collapse or expand its body, or click the Tools disclosure row to toggle tool names. Mouse reporting stops when Resize mode ends, so ordinary terminal selection is unchanged. The TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
+The sidebar starts visible and hides when the terminal is too narrow. Click any visible widget frame to collapse or expand its body; collapsed widgets retain their primary summary row in a compact frame, and the Tools disclosure row still toggles tool names. Press `Ctrl+Shift+R` to resize the sidebar by mouse or keyboard. In regular terminal mode, Atelier enables mouse reporting while the sidebar is visible, so use the terminal's mouse-bypass modifier—typically Shift—for native text selection. Fullscreen mouse events outside actionable Sidebar regions continue to Pi's viewport. The TODO panel supports Pi `todo` results and the optional `@juicesharp/rpiv-todo` extension.
 
 The Subagents panel combines the existing cost view with live `pi-subagents` lifecycle activity. It restores current-session async results after reload and keeps terminal runs in the recent list for ten minutes.
 

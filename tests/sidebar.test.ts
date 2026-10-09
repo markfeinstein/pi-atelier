@@ -1021,17 +1021,18 @@ describe("sidebar snapshot and layout", () => {
 		);
 	});
 
-	it("publishes panel crown hit regions and hides collapsed widget bodies", () => {
+	it("publishes full-panel hit regions and hides collapsed widget bodies", () => {
 		const frame = renderSidebarFrame(snapshot(), DEFAULT_CONFIG, theme, 44, 64, false, 0);
 		const rows = contentRows(frame.lines);
 		const workspaceY = rows.indexOf("pi-atelier") + 1;
+		const agentY = rows.indexOf("Agent") + 1;
 
 		expect(frame.hitRegions).toContainEqual({
 			action: { type: "toggle-panel-body", panelId: "workspace" },
 			x1: 2,
 			x2: 44,
 			y1: workspaceY,
-			y2: workspaceY,
+			y2: agentY - 2,
 			enabled: true,
 		});
 
@@ -1040,13 +1041,13 @@ describe("sidebar snapshot and layout", () => {
 		});
 		const collapsedRows = contentRows(collapsed.lines);
 		expect(collapsedRows).toContain("pi-atelier");
-		expect(collapsedRows).not.toContain("feature/sidebar ▲");
+		expect(collapsedRows).toContain("feature/sidebar ▲");
 		expect(collapsed.hitRegions).toContainEqual({
 			action: { type: "toggle-panel-body", panelId: "workspace" },
 			x1: 2,
 			x2: 44,
 			y1: collapsedRows.indexOf("pi-atelier") + 1,
-			y2: collapsedRows.indexOf("pi-atelier") + 1,
+			y2: collapsedRows.indexOf("pi-atelier") + 3,
 			enabled: true,
 		});
 	});
@@ -1469,7 +1470,7 @@ describe("sidebar component and overlay", () => {
 		expect(input).toBeTypeOf("function");
 	});
 
-	it("toggles widget bodies from panel crown mouse clicks without persisting layout", () => {
+	it("toggles widget bodies from ordinary panel clicks without persisting layout", () => {
 		let input: ((data: string) => unknown) | undefined;
 		const tui = fakeTui();
 		const custom = vi.fn((factory, customOptions) => {
@@ -1498,15 +1499,14 @@ describe("sidebar component and overlay", () => {
 		const rows = contentRows(component.render(44));
 		const workspaceY = rows.indexOf("pi-atelier") + 1;
 		expect(rows).toContain("feature/sidebar ▲");
-		expect(controller.beginResize()).toBe(true);
 
 		const sidebarStartX = 120 - DEFAULT_SIDEBAR_WIDTH + 1;
-		input?.(`\u001b[<0;${sidebarStartX + 8};${workspaceY}M`);
-		input?.(`\u001b[<0;${sidebarStartX + 8};${workspaceY}m`);
+		input?.(`\u001b[<0;${sidebarStartX + 8};${workspaceY + 2}M`);
+		input?.(`\u001b[<0;${sidebarStartX + 8};${workspaceY + 2}m`);
 
 		const collapsedRows = contentRows(component.render(44));
 		expect(collapsedRows).toContain("pi-atelier");
-		expect(collapsedRows).not.toContain("feature/sidebar ▲");
+		expect(collapsedRows).toContain("feature/sidebar ▲");
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.find((entry) => entry.id === "workspace")?.visible).toBe(true);
 	});
 

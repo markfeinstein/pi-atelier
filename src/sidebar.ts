@@ -233,8 +233,7 @@ function panelRows(
 	const top = `${palette.paint(role, crownPrefix)}${theme.bold(
 		palette.paint(role, safeTitle),
 	)} ${palette.paint(role, `${crownFill}╮`)}`;
-	if (collapsed) return [top, ""];
-	const body = rows.map((row) => {
+	const body = (collapsed ? rows.slice(0, 1) : rows).map((row) => {
 		const content = padToWidth(row, innerWidth);
 		return `${palette.paint("dim", "│")} ${content} ${palette.paint("dim", "│")}`;
 	});
@@ -712,13 +711,14 @@ interface SidebarGroup {
 	dropRank: number;
 }
 
-function regionForRow(
+function regionForRows(
 	action: SidebarAction | undefined,
 	width: number,
-	y: number,
+	y1: number,
+	y2 = y1,
 ): SidebarHitRegion | undefined {
 	if (!action) return undefined;
-	return { action, x1: 2, x2: width + 2, y1: y, y2: y, enabled: true };
+	return { action, x1: 2, x2: width + 2, y1, y2, enabled: true };
 }
 
 function renderGroupsFrame(
@@ -736,7 +736,7 @@ function renderGroupsFrame(
 		if (!group.panel) {
 			for (let rowIndex = 0; rowIndex < group.rows.length; rowIndex += 1) {
 				rendered.push(group.rows[rowIndex] ?? "");
-				const region = regionForRow(group.rowActions?.[rowIndex], width, rendered.length);
+				const region = regionForRows(group.rowActions?.[rowIndex], width, rendered.length);
 				if (region) hitRegions.push(region);
 			}
 			index += 1;
@@ -759,28 +759,28 @@ function renderGroupsFrame(
 			const panelStartY = rendered.length + 1;
 			const panelId = group.panelId;
 			const collapsed = panelId !== undefined && collapsedPanelIds.has(panelId);
-			rendered.push(
-				...panelRows(
-					group.panelTitle ?? group.panel,
-					rows,
-					width,
-					palette,
-					theme,
-					group.panelRole ?? "accent",
-					group.panelJewel ?? "✦",
-					collapsed,
-					group.preservePanelTitleCase ?? false,
-				),
+			const panelFrame = panelRows(
+				group.panelTitle ?? group.panel,
+				rows,
+				width,
+				palette,
+				theme,
+				group.panelRole ?? "accent",
+				group.panelJewel ?? "✦",
+				collapsed,
+				group.preservePanelTitleCase ?? false,
 			);
-			if (panelId && panelId !== "__empty__") {
-				const region = regionForRow({ type: "toggle-panel-body", panelId }, width, panelStartY);
-				if (region) hitRegions.push(region);
-			}
+			rendered.push(...panelFrame);
 			if (!collapsed) {
 				for (let rowIndex = 0; rowIndex < rowActions.length; rowIndex += 1) {
-					const region = regionForRow(rowActions[rowIndex], width, panelStartY + 1 + rowIndex);
+					const region = regionForRows(rowActions[rowIndex], width, panelStartY + 1 + rowIndex);
 					if (region) hitRegions.push(region);
 				}
+			}
+			if (panelId && panelId !== "__empty__") {
+				const panelEndY = panelStartY + Math.max(0, panelFrame.length - 2);
+				const region = regionForRows({ type: "toggle-panel-body", panelId }, width, panelStartY, panelEndY);
+				if (region) hitRegions.push(region);
 			}
 		}
 		index = next;
@@ -1726,7 +1726,9 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 	};
 
 	const split: SplitPaneController = createSplitPaneController({
-		subscribeInput: (handler) => options.ctx.ui.onTerminalInput(handler),
+		...(typeof options.ctx.ui.onTerminalInput === "function"
+			? { subscribeInput: (handler) => options.ctx.ui.onTerminalInput(handler) }
+			: {}),
 		onResizeChange: () => {
 			safely(() => requestOverlayRender?.());
 		},
