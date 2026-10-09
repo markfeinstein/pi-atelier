@@ -245,13 +245,13 @@ describe("sidebar snapshot and layout", () => {
 		expect(lines.every((line) => visibleWidth(line) <= 44)).toBe(true);
 		expect(lines.every((line) => stripAnsi(line).startsWith("  "))).toBe(true);
 		expect(lines.every((line) => !stripAnsi(line).startsWith("│ "))).toBe(true);
-		expect(text).toContain("╭─ ✦ Agent ");
+		expect(text).toContain("╭─ ✦ pi-atelier ");
 		expect(text).toContain("╭─ ✦ Usage ");
 		expect(text).toContain("╰────────────────");
 		expect(text).not.toContain("ATELIER");
 		expect(text).not.toMatch(/PI ATELIER|ATELIER|▛▀▜/);
-		expect(contentRows(lines)[0]).toBe("Workspace");
-		expect(contentRows(lines)).toContain("pi-atelier · feature/sidebar ▲");
+		expect(contentRows(lines)[0]).toBe("pi-atelier");
+		expect(contentRows(lines)).toContain("feature/sidebar ▲");
 		expect(contentRows(lines)).toContainEqual(
 			expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/),
 		);
@@ -264,17 +264,15 @@ describe("sidebar snapshot and layout", () => {
 		expect(rows).toContain("2 untracked");
 		expect(rows).not.toContain("/Users/example/projects/pi-atelier");
 		expect(rows).toContain("Sidebar implementation");
-		expect(rows).toContain("38 entries · persisted");
 	});
 
 	it.each([
 		[{ status: "inspecting" as const }, "inspecting…"],
-		[{ status: "not-repo" as const }, "not a Git repository"],
-		[{ status: "unavailable" as const }, "Git unavailable"],
+		[{ status: "unavailable" as const }, "VCS unavailable"],
 	])("renders the %s Pulse state explicitly", (workspacePulse, expected) => {
 		const { branch: _branch, ...withoutBranch } = snapshot();
 		const rows = renderRows({ ...withoutBranch, workspacePulse, dirty: false }, { color: false, now: 0 });
-		expect(rows).toContain(expected);
+		expect(rows.join("\n")).toContain(expected);
 	});
 
 	it("keeps conflict and stale signals visible without expanding every Git category", () => {
@@ -293,8 +291,8 @@ describe("sidebar snapshot and layout", () => {
 			{ ...snapshot(), workspacePulse: { status: "conflict", data } },
 			{ color: false, now: 0 },
 		);
-		expect(conflictRows).toContain("./packages/api");
-		expect(conflictRows).toContain("2 conflicts");
+		expect(conflictRows.join("\n")).toContain("./packages/api");
+		expect(conflictRows.join("\n")).toContain("2 conflicts");
 		expect(conflictRows).toContain("2 untracked · 1 binary · 1 submodule");
 
 		const staleRows = renderRows(
@@ -312,22 +310,21 @@ describe("sidebar snapshot and layout", () => {
 		expect(compactRows).toContain("?2 · bin1 · sub1");
 	});
 
-	it("drops Session and optional Pulse detail before the Workspace identity and core summary", () => {
+	it("uses merged-panel space to retain useful Workspace detail", () => {
 		const rows = renderRows(snapshot(), { height: 27, color: false, now: 0 });
 
-		expect(rows).toContain("Workspace");
-		expect(rows).toContain("pi-atelier · feature/sidebar ▲");
+		expect(rows).toContain("pi-atelier");
+		expect(rows).toContain("feature/sidebar ▲");
 		expect(rows).toContain("5 tracked  +182  −47");
-		expect(rows).not.toContain("2 untracked");
+		expect(rows).toContain("2 untracked");
 		expect(rows).not.toContain("Sidebar implementation");
-		expect(rows).not.toContain("38 entries · persisted");
 	});
 
 	it("pulses only the working Agent jewel while keeping other crowns stable", () => {
 		const bright = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 0).join("\n");
 		const soft = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 400).join("\n");
-		expect(bright).toContain("╭─ ✦ Agent ");
-		expect(soft).toContain("╭─ ✧ Agent ");
+		expect(bright).toContain("╭─ ✦ pi-atelier ");
+		expect(soft).toContain("╭─ ✧ pi-atelier ");
 		expect(bright).toContain("╭─ ✦ Usage ");
 		expect(soft).toContain("╭─ ✦ Usage ");
 	});
@@ -360,14 +357,10 @@ describe("sidebar snapshot and layout", () => {
 		});
 		expect(renderRows(noSession, { color: false })).toMatchInlineSnapshot(`
 			[
-			  "Workspace",
-			  "pi-atelier · feature/sidebar ▲",
+			  "pi-atelier",
+			  "feature/sidebar ▲",
 			  "5 tracked  +182  −47",
 			  "2 untracked",
-			  "6 entries · ephemeral",
-			  "",
-			  "",
-			  "Agent",
 			  "◆ Working · gitifying      gpt-5.6-sol",
 			  "OpenAI-Codex · Medium · Subscription",
 			  "",
@@ -420,6 +413,10 @@ describe("sidebar snapshot and layout", () => {
 			  "",
 			  "",
 			  "",
+			  "",
+			  "",
+			  "",
+			  "",
 			]
 		`);
 	});
@@ -428,7 +425,7 @@ describe("sidebar snapshot and layout", () => {
 		for (const width of [32, 40, 44]) {
 			const rows = renderRows(snapshot(), { width: width, color: false });
 			expect(rows.join("\n")).not.toContain("ATELIER");
-			expect(rows.join("\n")).toContain("Workspace");
+			expect(rows.join("\n")).toContain("pi-atelier");
 			expect(rows.join("\n")).toContain("Usage");
 			expect(rows).toContain("Tools");
 			expect(rows.every((row) => !row.startsWith("STATUS "))).toBe(true);
@@ -460,7 +457,7 @@ describe("sidebar snapshot and layout", () => {
 		const regular = renderRows(snapshot(), { config: expandedConfig, color: false });
 		expect(regular).toContainEqual(expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/));
 		expect(regular).toContain("OpenAI-Codex · Medium · Subscription");
-		expect(regular).toContain("pi-atelier · feature/sidebar ▲");
+		expect(regular).toContain("feature/sidebar ▲");
 		expect(regular).toContainEqual(expect.stringMatching(/^Enabled\s+8 \/ 12$/));
 	});
 
@@ -504,12 +501,11 @@ describe("sidebar snapshot and layout", () => {
 			extensionStatuses: [],
 		});
 		const rows = renderRows(missingSession, { color: false });
-		const workspaceIndex = rows.indexOf("Workspace");
+		const workspaceIndex = rows.indexOf("pi-atelier");
 		expect(workspaceIndex).toBe(0);
 		const agentIndex = rows.indexOf("Agent");
 		const workspaceRows = rows.slice(workspaceIndex + 1, agentIndex);
 		expect(workspaceRows).not.toContain("—");
-		expect(workspaceRows).toContain("6 entries · ephemeral");
 	});
 
 	it("does not render the session file path", () => {
@@ -518,7 +514,7 @@ describe("sidebar snapshot and layout", () => {
 		expect(text).not.toContain("session.jsonl");
 	});
 
-	it("renders labeled session persistence", () => {
+	it("renders the native session name when present", () => {
 		const persisted = buildSidebarSnapshot({
 			state,
 			cwd: "/tmp/project",
@@ -529,7 +525,7 @@ describe("sidebar snapshot and layout", () => {
 			availableToolCount: 12,
 			extensionStatuses: [],
 		});
-		expect(renderRows(persisted, { color: false })).toContain("6 entries · persisted");
+		expect(renderRows(persisted, { color: false })).toContain("Task session");
 	});
 
 	it("renders populated usage as aligned labeled rows", () => {
@@ -915,33 +911,30 @@ describe("sidebar snapshot and layout", () => {
 
 		const fullRows = renderRows(ranked, { color: false, now: 20_000 });
 		expect(fullRows).toContain("Sidebar implementation");
-		expect(fullRows).toContain("38 entries · persisted");
 		expect(fullRows).toContain("Tools");
 		expect(fullRows).toContain("Usage");
-		expect(fullRows).toContain("Workspace");
+		expect(fullRows).toContain("pi-atelier");
 		expect(fullRows.findIndex((row) => /^bash\s+active-b/.test(row))).toBeGreaterThanOrEqual(0);
 		expect(fullRows.findIndex((row) => /^bash\s+active-b/.test(row))).toBeLessThan(fullRows.indexOf("Usage"));
 
 		const withoutSession = renderRows(ranked, { height: 32, color: false, now: 20_000 });
 		expect(withoutSession).toContain("Tools");
 		expect(withoutSession).toContain("Usage");
-		expect(withoutSession).toContain("Workspace");
-		expect(withoutSession).not.toContain("Sidebar implementation");
-		expect(withoutSession).not.toContain("38 entries · persisted");
+		expect(withoutSession).toContain("pi-atelier");
+		expect(withoutSession).toContain("Sidebar implementation");
 
-		const withoutTools = renderRows(ranked, { height: 28, color: false, now: 20_000 });
+		const withoutTools = renderRows(ranked, { height: 24, color: false, now: 20_000 });
 		expect(withoutTools).not.toContain("Tools");
 		expect(withoutTools).toContain("Usage");
-		expect(withoutTools).toContain("Workspace");
+		expect(withoutTools).toContain("pi-atelier");
 
-		const coreOnly = renderRows(ranked, { height: 22, color: false, now: 20_000 });
+		const coreOnly = renderRows(ranked, { height: 18, color: false, now: 20_000 });
 		expect(coreOnly).not.toContain("Tools");
 		expect(coreOnly).toContain("Usage");
-		expect(coreOnly).toContain("Workspace");
+		expect(coreOnly).toContain("pi-atelier");
 		expect(coreOnly).toContain("5 tracked  +182  −47");
 		expect(coreOnly).not.toContain("Sidebar implementation");
-		expect(coreOnly).not.toContain("38 entries · persisted");
-		expect(coreOnly).toContain("Agent");
+		expect(coreOnly).toContainEqual(expect.stringMatching(/^◆ Working/));
 		expect(coreOnly).toContain("Usage");
 	});
 
@@ -1031,7 +1024,7 @@ describe("sidebar snapshot and layout", () => {
 	it("publishes panel crown hit regions and hides collapsed widget bodies", () => {
 		const frame = renderSidebarFrame(snapshot(), DEFAULT_CONFIG, theme, 44, 64, false, 0);
 		const rows = contentRows(frame.lines);
-		const workspaceY = rows.indexOf("Workspace") + 1;
+		const workspaceY = rows.indexOf("pi-atelier") + 1;
 
 		expect(frame.hitRegions).toContainEqual({
 			action: { type: "toggle-panel-body", panelId: "workspace" },
@@ -1046,14 +1039,14 @@ describe("sidebar snapshot and layout", () => {
 			collapsedPanelIds: new Set(["workspace"]),
 		});
 		const collapsedRows = contentRows(collapsed.lines);
-		expect(collapsedRows).toContain("Workspace");
-		expect(collapsedRows).not.toContain("pi-atelier · feature/sidebar ▲");
+		expect(collapsedRows).toContain("pi-atelier");
+		expect(collapsedRows).not.toContain("feature/sidebar ▲");
 		expect(collapsed.hitRegions).toContainEqual({
 			action: { type: "toggle-panel-body", panelId: "workspace" },
 			x1: 2,
 			x2: 44,
-			y1: collapsedRows.indexOf("Workspace") + 1,
-			y2: collapsedRows.indexOf("Workspace") + 1,
+			y1: collapsedRows.indexOf("pi-atelier") + 1,
+			y2: collapsedRows.indexOf("pi-atelier") + 1,
 			enabled: true,
 		});
 	});
@@ -1142,13 +1135,13 @@ describe("sidebar snapshot and layout", () => {
 	it("keeps only the required hierarchy in a compact 12 row rail", () => {
 		const text = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 12, false).join("\n");
 		expect(text).not.toContain("▛▀▜");
-		expect(text).toContain("Agent");
-		expect(text).not.toContain("Workspace");
+		expect(text).toContain("pi-atelier");
+		expect(text).toContain("◆ Working");
 		expect(text).not.toContain("Tools");
 		expect(text).not.toContain("tests passing");
 	});
 
-	it("renders missing metadata as unavailable and the session as ephemeral", () => {
+	it("renders missing metadata without synthetic session state", () => {
 		const {
 			modelId: _model,
 			provider: _provider,
@@ -1169,7 +1162,7 @@ describe("sidebar snapshot and layout", () => {
 		});
 		const lines = renderSidebarLines(missing, DEFAULT_CONFIG, theme, 32, 60, false);
 		expect(lines.join("\n")).toContain("—");
-		expect(lines.join("\n")).toContain("ephemeral");
+		expect(lines.join("\n")).not.toContain("ephemeral");
 		expect(lines.every((line) => visibleWidth(line) <= 32)).toBe(true);
 	});
 
@@ -1221,7 +1214,7 @@ describe("sidebar snapshot and layout", () => {
 		};
 		const rows = renderRows(populated, { config: configWithoutAgent, height: 64, color: false, now: 0 });
 		expect(rows).not.toContain("Agent");
-		for (const panel of ["Activity", "Todos", "Workspace", "Usage", "Tools"]) {
+		for (const panel of ["Activity", "Todos", "pi-atelier", "Usage", "Tools"]) {
 			expect(rows).toContain(panel);
 		}
 		expect(rows.some((row) => row.includes("Visible TODO"))).toBe(true);
@@ -1503,8 +1496,8 @@ describe("sidebar component and overlay", () => {
 		const component = (custom.mock.results[0]?.value as { component: { render(width: number): string[] } })
 			.component;
 		const rows = contentRows(component.render(44));
-		const workspaceY = rows.indexOf("Workspace") + 1;
-		expect(rows).toContain("pi-atelier · feature/sidebar ▲");
+		const workspaceY = rows.indexOf("pi-atelier") + 1;
+		expect(rows).toContain("feature/sidebar ▲");
 		expect(controller.beginResize()).toBe(true);
 
 		const sidebarStartX = 120 - DEFAULT_SIDEBAR_WIDTH + 1;
@@ -1512,8 +1505,8 @@ describe("sidebar component and overlay", () => {
 		input?.(`\u001b[<0;${sidebarStartX + 8};${workspaceY}m`);
 
 		const collapsedRows = contentRows(component.render(44));
-		expect(collapsedRows).toContain("Workspace");
-		expect(collapsedRows).not.toContain("pi-atelier · feature/sidebar ▲");
+		expect(collapsedRows).toContain("pi-atelier");
+		expect(collapsedRows).not.toContain("feature/sidebar ▲");
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.find((entry) => entry.id === "workspace")?.visible).toBe(true);
 	});
 

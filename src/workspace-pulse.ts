@@ -14,11 +14,16 @@ export interface WorkspacePulseSnapshot {
 
 export interface WorkspacePulseData {
 	root: string;
+	vcs?: "git" | "jj";
 	repositoryName?: string;
 	worktreeName?: string;
+	workspaceName?: string;
+	revision?: string;
 	bareRepository?: boolean;
 	relativeCwd: string;
 	branch?: string;
+	ahead?: number;
+	behind?: number;
 	snapshot: WorkspacePulseSnapshot;
 }
 
@@ -232,6 +237,8 @@ const EMPTY_WORKSPACE_SNAPSHOT: WorkspacePulseSnapshot = {
 
 interface ParsedStatus {
 	branch?: string;
+	ahead?: number;
+	behind?: number;
 	valid: boolean;
 	unborn: boolean;
 	trackedFiles: number;
@@ -263,6 +270,14 @@ function parseStatus(output: string): ParsedStatus {
 			sawBranchHead = true;
 			const branch = record.slice("# branch.head ".length).trim();
 			if (branch) parsed.branch = branch === "(detached)" ? "detached" : branch;
+			continue;
+		}
+		if (record.startsWith("# branch.ab ")) {
+			const match = /^# branch\.ab \+(\d+) -(\d+)$/.exec(record);
+			if (match) {
+				parsed.ahead = Number(match[1]);
+				parsed.behind = Number(match[2]);
+			}
 			continue;
 		}
 		if (record.startsWith("? ")) {
@@ -318,6 +333,118 @@ function parseNumstat(
 	return { linesAdded, linesRemoved, binaryFiles };
 }
 
+function hasJjMarker(cwd: string): boolean {
+	let current = nodePath.resolve(cwd);
+	while (true) {
+		if (existsSync(nodePath.join(current, ".jj"))) return true;
+		const parent = nodePath.dirname(current);
+		if (parent === current) return false;
+		current = parent;
+	}
+}
+
+function containsPath(root: string, target: string): boolean {
+	const relative = nodePath.relative(root, target);
+	return (
+		relative === "" ||
+		(!relative.startsWith(`..${nodePath.sep}`) && relative !== ".." && !nodePath.isAbsolute(relative))
+	);
+}
+
+function nulRecords(output: string): string[] {
+	const records = output.split("\0");
+	if (records.at(-1) === "") records.pop();
+	return records;
+}
+
+async function inspectJujutsuWorkspace(
+	options: InspectWorkspacePulseOptions,
+): Promise<WorkspacePulseInspection> {
+	const workspaceTemplate = 'name ++ "\\0" ++ root ++ "\\0"';
+	const workspaces = await options.exec(
+		"jj",
+		["workspace", "list", "--ignore-working-copy", "--color=never", "-T", workspaceTemplate],
+		{ cwd: options.cwd, timeout: 2_000 },
+	);
+	if (workspaces.code !== 0 || workspaces.killed || options.signal?.aborted)
+		return hasJjMarker(options.cwd) ? { kind: "unavailable" } : { kind: "not-repo" };
+
+	const records = nulRecords(workspaces.stdout);
+	const listed: Array<{ name: string; root: string }> = [];
+	for (let index = 0; index + 1 < records.length; index += 2) {
+		const name = records[index]?.trim() ?? "";
+		const root = records[index + 1]?.trim() ?? "";
+		if (name && root) listed.push({ name, root: nodePath.resolve(root) });
+	}
+	const cwd = nodePath.resolve(options.cwd);
+	const current = listed
+		.filter((workspace) => containsPath(workspace.root, cwd))
+		.sort((left, right) => right.root.length - left.root.length)[0];
+	if (!current) return { kind: "unavailable" };
+	const defaultRoot = listed.find((workspace) => workspace.name === "default")?.root ?? current.root;
+	const repositoryRoot =
+		nodePath.basename(defaultRoot) === ".jj-control" ? nodePath.dirname(defaultRoot) : defaultRoot;
+	const repositoryName = nodePath.basename(repositoryRoot);
+
+	const logTemplate =
+		'if(current_working_copy, "current", "bookmark") ++ "\\0" ++ change_id.short(8) ++ "\\0" ++ commit_id.short(8) ++ "\\0" ++ bookmarks.map(|b| b.name()).join(",") ++ "\\0" ++ if(conflict, "1", "0") ++ "\\0"';
+	const log = await options.exec(
+		"jj",
+		[
+			"log",
+			"--ignore-working-copy",
+			"--color=never",
+			"-r",
+			"@ | latest(::@ & bookmarks(), 1)",
+			"--no-graph",
+			"-T",
+			logTemplate,
+		],
+		{ cwd: current.root, timeout: 2_000 },
+	);
+	if (log.code !== 0 || log.killed || options.signal?.aborted) return { kind: "unavailable" };
+	const logRecords = nulRecords(log.stdout);
+	let revision = "";
+	let bookmark = "";
+	let conflicted = false;
+	for (let index = 0; index + 4 < logRecords.length; index += 5) {
+		const kind = logRecords[index];
+		const names = logRecords[index + 3]?.trim() ?? "";
+		if (kind === "current") {
+			revision = logRecords[index + 1]?.trim() ?? "";
+			bookmark ||= names.split(",")[0]?.trim() ?? "";
+			conflicted = logRecords[index + 4] === "1";
+		} else if (kind === "bookmark") {
+			bookmark ||= names.split(",")[0]?.trim() ?? "";
+		}
+	}
+	if (!revision) return { kind: "unavailable" };
+
+	const diff = await options.exec(
+		"jj",
+		["diff", "--ignore-working-copy", "--color=never", "-r", "@", "--summary"],
+		{ cwd: current.root, timeout: 2_000 },
+	);
+	if (diff.code !== 0 || diff.killed || options.signal?.aborted) return { kind: "unavailable" };
+	const changedFiles = diff.stdout.split(/\r?\n/).filter((line) => /^[A-Z] /.test(line)).length;
+
+	return {
+		kind: "available",
+		root: current.root,
+		vcs: "jj",
+		...(repositoryName ? { repositoryName } : {}),
+		workspaceName: current.name,
+		revision,
+		relativeCwd: toDisplayPath(nodePath.relative(current.root, cwd), nodePath.sep),
+		...(bookmark ? { branch: bookmark } : {}),
+		snapshot: {
+			...EMPTY_WORKSPACE_SNAPSHOT,
+			trackedFiles: changedFiles,
+			conflicts: conflicted ? 1 : 0,
+		},
+	};
+}
+
 async function inspectWorkspacePulseUnchecked(
 	options: InspectWorkspacePulseOptions,
 ): Promise<WorkspacePulseInspection> {
@@ -354,9 +481,9 @@ async function inspectWorkspacePulseUnchecked(
 			}
 		}
 		const explicitNotRepo = /not a git repository/i.test(`${discovery.stderr}\n${discovery.stdout}`);
-		return !discovery.killed && (explicitNotRepo || (discovery.code === 128 && !hasGitMarker(options.cwd)))
-			? { kind: "not-repo" }
-			: { kind: "unavailable" };
+		const notGitRepository =
+			!discovery.killed && (explicitNotRepo || (discovery.code === 128 && !hasGitMarker(options.cwd)));
+		return notGitRepository ? inspectJujutsuWorkspace(options) : { kind: "unavailable" };
 	}
 	const discovered = discoveryOutput(discovery.stdout);
 	const root = discovered.root;
@@ -403,6 +530,8 @@ async function inspectWorkspacePulseUnchecked(
 		...worktreeIdentity,
 		relativeCwd: toDisplayPath(nodePath.relative(root, options.cwd), nodePath.sep),
 		...(parsedStatus.branch ? { branch: parsedStatus.branch } : {}),
+		...(parsedStatus.ahead ? { ahead: parsedStatus.ahead } : {}),
+		...(parsedStatus.behind ? { behind: parsedStatus.behind } : {}),
 		snapshot: {
 			trackedFiles: parsedStatus.trackedFiles,
 			untrackedFiles: parsedStatus.untrackedFiles,

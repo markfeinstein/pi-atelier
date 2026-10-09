@@ -248,17 +248,19 @@ describe("inspectWorkspacePulse", () => {
 		expect(exec).toHaveBeenCalledOnce();
 	});
 
-	it("reports an explicit clean Pulse for the containing worktree", async () => {
+	it("reports an explicit clean Pulse and local divergence for the containing worktree", async () => {
 		const exec = vi
 			.fn()
 			.mockResolvedValueOnce(result("true\n/repo \n"))
-			.mockResolvedValueOnce(result("# branch.oid abc\0# branch.head main\0"));
+			.mockResolvedValueOnce(result("# branch.oid abc\0# branch.head main\0# branch.ab +2 -3\0"));
 
 		await expect(inspectWorkspacePulse({ exec, cwd: "/repo /packages/api" })).resolves.toEqual({
 			kind: "available",
 			root: "/repo ",
 			relativeCwd: "packages/api",
 			branch: "main",
+			ahead: 2,
+			behind: 3,
 			snapshot: {
 				trackedFiles: 0,
 				untrackedFiles: 0,
@@ -320,6 +322,56 @@ describe("inspectWorkspacePulse", () => {
 		});
 		expect(exec).toHaveBeenCalledTimes(3);
 		expect(exec.mock.calls.some(([, args]) => args.includes("status"))).toBe(false);
+	});
+
+	it("falls back to read-only Jujutsu workspace metadata when Git is absent", async () => {
+		const workspaces = ["default", "/repo/.jj-control", "integration", "/repo/integration", ""].join("\0");
+		const log = [
+			"current",
+			"abcd1234",
+			"deadbeef",
+			"",
+			"1",
+			"bookmark",
+			"parent12",
+			"feedface",
+			"main",
+			"0",
+			"",
+		].join("\0");
+		const exec = vi
+			.fn()
+			.mockResolvedValueOnce(result("", 128, "fatal: not a git repository"))
+			.mockResolvedValueOnce(result("false\n/repo/.git\n"))
+			.mockResolvedValueOnce(result(workspaces))
+			.mockResolvedValueOnce(result(log))
+			.mockResolvedValueOnce(result("M src/a.ts\nA src/b.ts\n"));
+
+		await expect(inspectWorkspacePulse({ exec, cwd: "/repo/integration/packages/api" })).resolves.toEqual({
+			kind: "available",
+			root: "/repo/integration",
+			vcs: "jj",
+			repositoryName: "repo",
+			workspaceName: "integration",
+			revision: "abcd1234",
+			relativeCwd: "packages/api",
+			branch: "main",
+			snapshot: {
+				trackedFiles: 2,
+				untrackedFiles: 0,
+				linesAdded: 0,
+				linesRemoved: 0,
+				binaryFiles: 0,
+				submodules: 0,
+				conflicts: 1,
+			},
+		});
+		expect(exec).toHaveBeenNthCalledWith(
+			3,
+			"jj",
+			expect.arrayContaining(["workspace", "list", "--ignore-working-copy"]),
+			{ cwd: "/repo/integration/packages/api", timeout: 2_000 },
+		);
 	});
 
 	it.each([
