@@ -60,6 +60,7 @@ export const BUILTIN_SIDEBAR_PANEL_IDS = [
 	"todos",
 	"usage",
 	"tools",
+	"mcp",
 ] as const;
 
 const RETIRED_BUILTIN_SIDEBAR_PANEL_IDS = ["context"] as const;
