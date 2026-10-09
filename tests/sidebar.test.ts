@@ -250,7 +250,7 @@ describe("sidebar snapshot and layout", () => {
 		expect(text).toContain("╰────────────────");
 		expect(text).not.toContain("ATELIER");
 		expect(text).not.toMatch(/PI ATELIER|ATELIER|▛▀▜/);
-		expect(contentRows(lines)[0]).toBe("Agent");
+		expect(contentRows(lines)[0]).toBe("Workspace");
 		expect(contentRows(lines)).toContain("pi-atelier · feature/sidebar ▲");
 		expect(contentRows(lines)).toContainEqual(
 			expect.stringMatching(/^◆ Working · gitifying\s+gpt-5\.6-sol$/),
@@ -360,6 +360,13 @@ describe("sidebar snapshot and layout", () => {
 		});
 		expect(renderRows(noSession, { color: false })).toMatchInlineSnapshot(`
 			[
+			  "Workspace",
+			  "pi-atelier · feature/sidebar ▲",
+			  "5 tracked  +182  −47",
+			  "2 untracked",
+			  "6 entries · ephemeral",
+			  "",
+			  "",
 			  "Agent",
 			  "◆ Working · gitifying      gpt-5.6-sol",
 			  "OpenAI-Codex · Medium · Subscription",
@@ -378,13 +385,6 @@ describe("sidebar snapshot and layout", () => {
 			  "Cache read                      100.0k",
 			  "Cache hit                        96.0%",
 			  "Cost                            $0.479",
-			  "",
-			  "",
-			  "Workspace",
-			  "pi-atelier · feature/sidebar ▲",
-			  "5 tracked  +182  −47",
-			  "2 untracked",
-			  "6 entries · ephemeral",
 			  "",
 			  "",
 			  "Tools",
@@ -505,11 +505,9 @@ describe("sidebar snapshot and layout", () => {
 		});
 		const rows = renderRows(missingSession, { color: false });
 		const workspaceIndex = rows.indexOf("Workspace");
-		const usageIndex = rows.indexOf("Usage");
-		expect(workspaceIndex).toBeGreaterThanOrEqual(0);
-		expect(usageIndex).toBeLessThan(workspaceIndex);
-		const toolsIndex = rows.indexOf("Tools");
-		const workspaceRows = rows.slice(workspaceIndex + 1, toolsIndex);
+		expect(workspaceIndex).toBe(0);
+		const agentIndex = rows.indexOf("Agent");
+		const workspaceRows = rows.slice(workspaceIndex + 1, agentIndex);
 		expect(workspaceRows).not.toContain("—");
 		expect(workspaceRows).toContain("6 entries · ephemeral");
 	});

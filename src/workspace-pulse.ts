@@ -1,4 +1,4 @@
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import nodePath from "node:path";
 import { toDisplayPath } from "./display-path.js";
 
@@ -14,6 +14,9 @@ export interface WorkspacePulseSnapshot {
 
 export interface WorkspacePulseData {
 	root: string;
+	repositoryName?: string;
+	worktreeName?: string;
+	bareRepository?: boolean;
 	relativeCwd: string;
 	branch?: string;
 	snapshot: WorkspacePulseSnapshot;
@@ -185,6 +188,48 @@ function discoveryOutput(output: string): { inside: boolean; root?: string } {
 	return { inside, ...(root ? { root } : {}) };
 }
 
+function linkedWorktreeIdentity(root: string): { repositoryName?: string; worktreeName?: string } {
+	try {
+		const marker = readFileSync(nodePath.join(root, ".git"), "utf8").trim();
+		const gitDirValue = /^gitdir:\s*(.+)$/i.exec(marker)?.[1];
+		if (!gitDirValue) return {};
+		const gitDir = nodePath.resolve(root, gitDirValue);
+		const worktreesDir = nodePath.dirname(gitDir);
+		if (nodePath.basename(worktreesDir) !== "worktrees") return {};
+		const commonDir = nodePath.dirname(worktreesDir);
+		const repositoryRoot = nodePath.basename(commonDir) === ".git" ? nodePath.dirname(commonDir) : commonDir;
+		return {
+			repositoryName: nodePath.basename(repositoryRoot).replace(/\.git$/i, ""),
+			worktreeName: nodePath.basename(root),
+		};
+	} catch {
+		return {};
+	}
+}
+
+function bareDiscoveryOutput(output: string): { bare: boolean; root?: string } {
+	const separator = output.indexOf("\n");
+	if (separator < 0) return { bare: false };
+	const bare = output.slice(0, separator).replace(/\r$/, "") === "true";
+	const root = output.slice(separator + 1).replace(/[\r\n]+$/, "");
+	return { bare, ...(root ? { root } : {}) };
+}
+
+function bareRepositoryName(root: string): string {
+	const basename = nodePath.basename(root);
+	return (basename === ".git" ? nodePath.basename(nodePath.dirname(root)) : basename).replace(/\.git$/i, "");
+}
+
+const EMPTY_WORKSPACE_SNAPSHOT: WorkspacePulseSnapshot = {
+	trackedFiles: 0,
+	untrackedFiles: 0,
+	linesAdded: 0,
+	linesRemoved: 0,
+	binaryFiles: 0,
+	submodules: 0,
+	conflicts: 0,
+};
+
 interface ParsedStatus {
 	branch?: string;
 	valid: boolean;
@@ -281,6 +326,33 @@ async function inspectWorkspacePulseUnchecked(
 		timeout: 2_000,
 	});
 	if (discovery.code !== 0 || discovery.killed) {
+		if (!discovery.killed && !options.signal?.aborted) {
+			const bareDiscovery = await options.exec(
+				"git",
+				["rev-parse", "--is-bare-repository", "--absolute-git-dir"],
+				{ cwd: options.cwd, timeout: 2_000 },
+			);
+			const bare = bareDiscoveryOutput(bareDiscovery.stdout);
+			if (bareDiscovery.code === 0 && !bareDiscovery.killed && bare.bare && bare.root) {
+				const branchResult = await options.exec(
+					"git",
+					["-C", bare.root, "symbolic-ref", "--quiet", "--short", "HEAD"],
+					{ timeout: 2_000 },
+				);
+				if (options.signal?.aborted) return { kind: "unavailable" };
+				const repositoryName = bareRepositoryName(bare.root);
+				const branch = branchResult.code === 0 && !branchResult.killed ? branchResult.stdout.trim() : "";
+				return {
+					kind: "available",
+					root: bare.root,
+					...(repositoryName ? { repositoryName } : {}),
+					bareRepository: true,
+					relativeCwd: "",
+					...(branch ? { branch } : {}),
+					snapshot: { ...EMPTY_WORKSPACE_SNAPSHOT },
+				};
+			}
+		}
 		const explicitNotRepo = /not a git repository/i.test(`${discovery.stderr}\n${discovery.stdout}`);
 		return !discovery.killed && (explicitNotRepo || (discovery.code === 128 && !hasGitMarker(options.cwd)))
 			? { kind: "not-repo" }
@@ -289,6 +361,7 @@ async function inspectWorkspacePulseUnchecked(
 	const discovered = discoveryOutput(discovery.stdout);
 	const root = discovered.root;
 	if (!discovered.inside || !root) return { kind: "unavailable" };
+	const worktreeIdentity = linkedWorktreeIdentity(root);
 
 	const status = await options.exec(
 		"git",
@@ -327,6 +400,7 @@ async function inspectWorkspacePulseUnchecked(
 	return {
 		kind: "available",
 		root,
+		...worktreeIdentity,
 		relativeCwd: toDisplayPath(nodePath.relative(root, options.cwd), nodePath.sep),
 		...(parsedStatus.branch ? { branch: parsedStatus.branch } : {}),
 		snapshot: {
