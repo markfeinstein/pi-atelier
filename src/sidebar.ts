@@ -5,8 +5,10 @@ import { type Component, type OverlayHandle, truncateToWidth, visibleWidth } fro
 import type { ThemeLike } from "./footer.js";
 import { hasCapturingOverlay } from "./image-compositor.js";
 import type { McpServerSummary } from "./mcp-servers.js";
+import { subcellMeter } from "./meters.js";
 import { aggregateMetrics, formatTokens } from "./metrics.js";
 import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.js";
+import { type PrefillSnapshot, formatPrefillRows } from "./prefill.js";
 import {
 	EMPTY_RUN_ACTIVITY,
 	formatDuration,
@@ -112,6 +114,7 @@ export interface SidebarSnapshotInput {
 	subagents?: SubagentActivitySnapshot;
 	todos?: readonly NormalizedTodo[];
 	sidebarPanels?: readonly SidebarPanelData[];
+	prefill?: PrefillSnapshot;
 }
 
 export interface SidebarSnapshot extends AtelierState {
@@ -129,6 +132,7 @@ export interface SidebarSnapshot extends AtelierState {
 	subagents: SubagentActivitySnapshot;
 	todos: readonly NormalizedTodo[];
 	sidebarPanels?: readonly SidebarPanelData[];
+	prefill?: PrefillSnapshot;
 }
 
 function workspacePulseData(pulse: WorkspacePulseState): WorkspacePulseData | undefined {
@@ -158,6 +162,7 @@ export function buildSidebarSnapshot(input: SidebarSnapshotInput): SidebarSnapsh
 		subagents: input.subagents ?? EMPTY_SUBAGENT_ACTIVITY,
 		todos: input.todos ?? [],
 		sidebarPanels: input.sidebarPanels ?? [],
+		...(input.prefill ? { prefill: { ...input.prefill } } : {}),
 	};
 }
 
@@ -520,23 +525,35 @@ function contextRows(
 	const percentText = `${severity}${percent.toFixed(1)}%`;
 	const percentWidth = Math.max(6, visibleWidth(percentText));
 	const meterWidth = Math.max(0, width - percentWidth - 2);
-	const units = Math.min(
-		meterWidth * 8,
-		Math.max(percent > 0 ? 1 : 0, Math.round((percent * meterWidth * 8) / 100)),
-	);
-	const full = Math.floor(units / 8);
-	const fraction = units % 8;
-	const fill = "█".repeat(full) + (fraction ? "▏▎▍▌▋▊▉"[fraction - 1] : "");
-	// A shared background covers the unused part of the fractional cell too,
-	// keeping even 1% usage attached to its track. Reset before the percentage.
-	const meter = colorEnabled
-		? `\u001b[48;2;48;53;56m${palette.paint(role, fill)}${" ".repeat(meterWidth - full - (fraction ? 1 : 0))}\u001b[49m`
-		: `${palette.paint(role, "█".repeat(full))}${palette.paint("dim", "░".repeat(meterWidth - full))}`;
+	const meter = subcellMeter(percent, meterWidth, role, palette, colorEnabled);
 	const percentage = theme.bold(palette.paint(role, percentText.padStart(percentWidth)));
 	const usage = `${formatTokens(metrics.contextTokens)} / ${metrics.contextWindow > 0 ? formatTokens(metrics.contextWindow) : "—"}`;
 	return [
 		meterWidth > 0 ? `${meter}  ${percentage}` : percentage,
 		labeledRow("Tokens", usage, width, palette, "muted"),
+	];
+}
+
+function prefillRows(
+	snapshot: SidebarSnapshot,
+	config: AtelierConfig,
+	width: number,
+	palette: AtelierPalette,
+	theme: ThemeLike,
+	colorEnabled: boolean,
+): string[] {
+	const prefill = snapshot.prefill;
+	if (!prefill) return [];
+	const percentText = config.prefillViews.includes("percent") ? `${Math.round(prefill.percent * 100)}%` : "";
+	const percentWidth = percentText ? visibleWidth(percentText) : 0;
+	const meterWidth = Math.max(0, width - percentWidth - (percentText ? 2 : 0));
+	const meter = subcellMeter(prefill.percent * 100, meterWidth, "working", palette, colorEnabled);
+	const percentage = theme.bold(palette.paint("working", percentText));
+	return [
+		percentText && meterWidth > 0 ? `${meter}  ${percentage}` : percentText || meter,
+		...formatPrefillRows(prefill, config.prefillViews).map((row) =>
+			labeledRow(row.label, row.value, width, palette, "muted"),
+		),
 	];
 }
 
@@ -1489,6 +1506,19 @@ export function renderSidebarFrame(
 			required: false,
 			dropRank: 20,
 		},
+		...(snapshot.prefill
+			? [
+					{
+						name: "prefill",
+						panel: "PREFILL",
+						panelId: "prefill",
+						panelRole: "working" as const,
+						rows: prefillRows(snapshot, config, panelContentWidth, palette, theme, colorEnabled),
+						required: false,
+						dropRank: 100,
+					},
+				]
+			: []),
 		...subagentGroups(snapshot, config, panelContentWidth, palette, chartGraphics),
 		{
 			name: "toolsStatus",
@@ -1546,7 +1576,7 @@ export function renderSidebarFrame(
 			entry.id as (typeof BUILTIN_SIDEBAR_PANEL_IDS)[number],
 		);
 		const panel = isSidebarPanelContributionId(entry.id) ? contributed.get(entry.id) : undefined;
-		if (builtin && (entry.id !== "mcp" || grouped.has(entry.id))) {
+		if (builtin && ((entry.id !== "mcp" && entry.id !== "prefill") || grouped.has(entry.id))) {
 			availableVisible = true;
 			ordered.push(...(grouped.get(entry.id) ?? []));
 		} else if (panel) {

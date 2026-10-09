@@ -59,6 +59,7 @@ export const BUILTIN_SIDEBAR_PANEL_IDS = [
 	"alerts",
 	"todos",
 	"usage",
+	"prefill",
 	"tools",
 	"mcp",
 ] as const;

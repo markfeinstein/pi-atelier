@@ -27,6 +27,12 @@ import {
 } from "../src/menu.js";
 import { summarizeMcpServers } from "../src/mcp-servers.js";
 import { isColorEnabled } from "../src/palette.js";
+import {
+	createPrefillThrottle,
+	createPrefillTracker,
+	type PrefillThrottle,
+	type PrefillTracker,
+} from "../src/prefill.js";
 import { createRunActivityTracker, type RunActivityTracker } from "../src/run-activity.js";
 import type { SidebarPanelSetting } from "../src/settings-workspace.js";
 import {
@@ -64,6 +70,7 @@ import type {
 	TodoItem,
 } from "../src/types.js";
 import { DEFAULT_CONFIG } from "../src/types.js";
+import { installUserPromptCopy } from "../src/user-prompt-copy.js";
 
 export type {
 	SidebarBarNode,
@@ -139,6 +146,27 @@ export type {
 	StatusRailPlacement,
 } from "../src/types.js";
 
+interface ProviderStreamEventLike {
+	readonly type: "provider_stream_event";
+	readonly provider?: string;
+	readonly api?: string;
+	readonly data: unknown;
+}
+
+/** Pi added this event in 0.99; registering an unknown event remains inert on older supported Pi versions. */
+function registerProviderStreamHandler(
+	pi: ExtensionAPI,
+	handler: (event: ProviderStreamEventLike, ctx: ExtensionContext) => void,
+): void {
+	const capable = pi as ExtensionAPI & {
+		on(
+			event: "provider_stream_event",
+			handler: (event: ProviderStreamEventLike, ctx: ExtensionContext) => void,
+		): void;
+	};
+	capable.on("provider_stream_event", handler);
+}
+
 export interface AtelierExtensionDependencies {
 	loadConfig?: typeof loadConfig;
 	saveConfigPatch?: typeof saveUserConfigPatch;
@@ -154,6 +182,8 @@ interface ActiveSession {
 	readonly sidebar: SidebarController;
 	readonly panelRegistry: SidebarPanelRegistry;
 	readonly runActivity: RunActivityTracker;
+	readonly prefill: PrefillTracker;
+	readonly prefillThrottle: PrefillThrottle;
 	readonly subagentActivity: SubagentActivityTracker;
 	readonly completionNotifier: CompletionNotifier;
 	readonly retiredState: AtelierState;
@@ -161,6 +191,7 @@ interface ActiveSession {
 	readonly retiredCwd: string;
 	readonly overlayCancellations: Set<() => void>;
 	footerDisposer: (() => void) | undefined;
+	promptCopyDisposer: (() => void) | undefined;
 	footerGeneration: number;
 	retired: boolean;
 	unsubscribeAskUserBlocked: (() => void) | undefined;
@@ -363,11 +394,12 @@ export default function atelierExtension(
 				sidebarPanels: [],
 			});
 		}
-		const { ctx, panelRegistry, runActivity, runtime } = targetSession;
+		const { ctx, panelRegistry, prefill, runActivity, runtime } = targetSession;
 		const sessionName = ctx.sessionManager.getSessionName();
 		const sessionFile = ctx.sessionManager.getSessionFile();
 		const activeTools = pi.getActiveTools();
 		const allTools = pi.getAllTools();
+		const prefillSnapshot = prefill.getSnapshot();
 		return buildSidebarSnapshot({
 			state: runtime.getState(),
 			cwd: ctx.cwd,
@@ -383,6 +415,7 @@ export default function atelierExtension(
 			subagents: targetSession.subagentActivity.getSnapshot(),
 			todos: targetSession.todos,
 			sidebarPanels: panelRegistry.getAvailable(),
+			...(prefillSnapshot ? { prefill: prefillSnapshot } : {}),
 		});
 	}
 
@@ -445,7 +478,10 @@ export default function atelierExtension(
 		// Invalidate callbacks before touching Pi so a failed removal cannot leave a live footer.
 		session.footerGeneration += 1;
 		const footerDisposer = session.footerDisposer;
+		const promptCopyDisposer = session.promptCopyDisposer;
 		session.footerDisposer = undefined;
+		session.promptCopyDisposer = undefined;
+		if (promptCopyDisposer) attemptCleanup(promptCopyDisposer);
 		if (shouldClear) {
 			try {
 				session.ctx.ui.setFooter(undefined);
@@ -482,6 +518,8 @@ export default function atelierExtension(
 		attemptCleanup(() => session.sidebar.dispose());
 		attemptCleanup(() => session.panelRegistry.dispose());
 		attemptCleanup(() => session.runtime.dispose());
+		attemptCleanup(() => session.prefillThrottle.cancel());
+		attemptCleanup(() => session.prefill.clear());
 		attemptCleanup(() => session.runActivity.reset());
 		attemptCleanup(() => session.subagentActivity.dispose());
 		attemptCleanup(() => session.completionNotifier.reset());
@@ -681,6 +719,7 @@ export default function atelierExtension(
 		let footer: AtelierFooterComponent | undefined;
 		let headerRendered = false;
 		let editorInstalled = false;
+		let fullscreen = false;
 		let extensionStatusRenderQueued = false;
 		const getCurrentSession = (): ActiveSession | undefined => {
 			const current = activeSession;
@@ -689,6 +728,7 @@ export default function atelierExtension(
 				: undefined;
 		};
 		ctx.ui.setFooter((tui, theme, footerData) => {
+			fullscreen = tui.mode === "fullscreen";
 			const footerRequestRender = (): void => {
 				if (getCurrentSession()) tui.requestRender();
 			};
@@ -791,6 +831,13 @@ export default function atelierExtension(
 				// Pi may also reject restoration; leave the complete footer available.
 			}
 		}
+		attemptCleanup(() => targetSession.promptCopyDisposer?.());
+		targetSession.promptCopyDisposer = installUserPromptCopy(
+			(message, kind) => {
+				if (getCurrentSession()) ctx.ui.notify(message, kind);
+			},
+			() => fullscreen,
+		);
 	}
 
 	pi.registerCommand("atelier", {
@@ -891,6 +938,8 @@ export default function atelierExtension(
 				}
 				enabled = false;
 				current.runtime.setEnabled(false);
+				current.prefill.clear();
+				current.prefillThrottle.cancel();
 				current.runActivity.resetResponse();
 				current.completionNotifier.reset();
 				current.todos = [];
@@ -933,6 +982,7 @@ export default function atelierExtension(
 		let localSidebar: SidebarController | undefined;
 		let localPanelRegistry: SidebarPanelRegistry | undefined;
 		let localCompletionNotifier: CompletionNotifier | undefined;
+		let localPrefillThrottle: PrefillThrottle | undefined;
 		let localSubagentActivity: SubagentActivityTracker | undefined;
 		let candidateSession: ActiveSession | undefined;
 		let publishedSession: ActiveSession | undefined;
@@ -1028,9 +1078,22 @@ export default function atelierExtension(
 						"error",
 					),
 			});
+			const candidatePrefill = createPrefillTracker({ providers: loaded.config.prefillProviders });
+			const candidatePrefillThrottle = createPrefillThrottle({
+				requestRender: () => {
+					const current = activeSession;
+					if (current?.token === initializationToken) current.sidebar.requestRender();
+				},
+				schedule: (delayMs, run) => {
+					const timer = setTimeout(run, delayMs);
+					return () => clearTimeout(timer);
+				},
+			});
+			localPrefillThrottle = candidatePrefillThrottle;
 			if (!isFresh()) {
 				attemptCleanup(() => localSidebar?.dispose());
 				attemptCleanup(() => localPanelRegistry?.dispose());
+				attemptCleanup(() => localPrefillThrottle?.cancel());
 				attemptCleanup(() => localRunActivity.reset());
 				attemptCleanup(() => localSubagentActivity?.dispose());
 				attemptCleanup(() => candidateCompletionNotifier.reset());
@@ -1046,6 +1109,8 @@ export default function atelierExtension(
 				sidebar: localSidebar,
 				panelRegistry: localPanelRegistry,
 				runActivity: localRunActivity,
+				prefill: candidatePrefill,
+				prefillThrottle: candidatePrefillThrottle,
 				subagentActivity: localSubagentActivity,
 				completionNotifier: candidateCompletionNotifier,
 				retiredState: createInertAtelierState(autoCompact),
@@ -1053,6 +1118,7 @@ export default function atelierExtension(
 				retiredCwd: initializationContext.cwd,
 				overlayCancellations: new Set(),
 				footerDisposer: undefined,
+				promptCopyDisposer: undefined,
 				footerGeneration: 0,
 				retired: false,
 				unsubscribeAskUserBlocked: undefined,
@@ -1191,8 +1257,37 @@ export default function atelierExtension(
 		current.completionNotifier.runStarted();
 		current.runtime.scheduleWorkspacePulseRefresh();
 	});
-	pi.on("before_provider_request", (_event, ctx) => {
-		if (enabled) getActiveSession(ctx)?.runActivity.startResponse();
+	pi.on("before_provider_request", (event, ctx) => {
+		const current = getActiveSession(ctx);
+		if (!enabled || !current) return;
+		current.runActivity.startResponse();
+		if (!current.runtime.getConfig().prefillEnabled) {
+			current.prefill.clear();
+			current.prefillThrottle.cancel();
+			return;
+		}
+		if (!current.prefill.noteRequest(ctx.model, event.payload)) return;
+		return { ...(event.payload as Record<string, unknown>), return_progress: true };
+	});
+	pi.on("after_provider_response", (event, ctx) => {
+		const current = getActiveSession(ctx);
+		if (!current || !current.prefill.noteResponseFailure(event.status)) return;
+		current.prefillThrottle.cancel();
+		ctx.ui.notify("Prefill progress is off for this provider: it rejected the progress request", "warning");
+	});
+	registerProviderStreamHandler(pi, (event, ctx) => {
+		const current = getActiveSession(ctx);
+		if (!enabled || !current) return;
+		const wasShowing = current.prefill.getSnapshot() !== undefined;
+		const snapshot = current.prefill.noteChunk(event.data, event);
+		if (snapshot) {
+			current.prefillThrottle.note();
+			return;
+		}
+		if (wasShowing && current.prefill.getSnapshot() === undefined) {
+			current.prefillThrottle.cancel();
+			current.sidebar.requestRender();
+		}
 	});
 	pi.on("message_update", (event, ctx) => {
 		const current = getActiveSession(ctx);
@@ -1250,6 +1345,8 @@ export default function atelierExtension(
 		const current = getActiveSession(ctx);
 		if (!current || !ctx.isIdle()) return;
 		current.runActivity.settle();
+		current.prefill.clear();
+		current.prefillThrottle.cancel();
 		current.runtime.setActivity("ready");
 		if (!enabled) return;
 		current.sidebar.requestRender();

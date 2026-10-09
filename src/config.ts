@@ -26,6 +26,7 @@ import {
 	type DisplayProvenance,
 	type DisplaySettings,
 	type PaletteColorSpec,
+	type PrefillView,
 	type PresetName,
 	type SegmentId,
 	type SegmentLayout,
@@ -164,6 +165,8 @@ const cloneConfig = (config: AtelierConfig): AtelierConfig => ({
 	segmentLayout: config.segmentLayout.map((entry) => ({ ...entry })),
 	sidebarPanelLayout: cloneSidebarLayout(config.sidebarPanelLayout),
 	contributedPanelCollapsed: { ...config.contributedPanelCollapsed },
+	prefillViews: [...config.prefillViews],
+	prefillProviders: [...config.prefillProviders],
 	...(Array.isArray(config.workingLabels) ? { workingLabels: [...config.workingLabels] } : {}),
 });
 
@@ -471,15 +474,43 @@ function applyNonDisplay(
 		"showSidebarToolNames",
 		"showSidebarOnStartup",
 		"completionNotifications",
+		"prefillEnabled",
 		"nerdFont",
 	] as const) {
 		if (typeof input[key] === "boolean") {
 			if (
 				userLayer ||
-				(key !== "showSidebarOnStartup" && key !== "completionNotifications" && key !== "nerdFont")
+				(key !== "showSidebarOnStartup" &&
+					key !== "completionNotifications" &&
+					key !== "prefillEnabled" &&
+					key !== "nerdFont")
 			)
 				config[key] = input[key];
 		} else if (key in input) warnings.push(`${key} must be boolean`);
+	}
+	if ("prefillViews" in input) {
+		if (!Array.isArray(input.prefillViews)) warnings.push("prefillViews must be an array");
+		else {
+			const allowed = new Set<PrefillView>(["percent", "tokens", "eta"]);
+			const views = input.prefillViews.filter(
+				(view): view is PrefillView => typeof view === "string" && allowed.has(view as PrefillView),
+			);
+			if (views.length !== input.prefillViews.length)
+				warnings.push("prefillViews entries must be percent, tokens, or eta");
+			config.prefillViews = [...new Set(views)];
+		}
+	}
+	if (userLayer && "prefillProviders" in input) {
+		if (!Array.isArray(input.prefillProviders)) warnings.push("prefillProviders must be an array");
+		else
+			config.prefillProviders = [
+				...new Set(
+					input.prefillProviders
+						.filter((provider): provider is string => typeof provider === "string")
+						.map((provider) => provider.trim())
+						.filter(Boolean),
+				),
+			];
 	}
 	for (const key of ["showSidebarAgent", "showSidebarTodos"] as const) {
 		if (key in input && typeof input[key] !== "boolean") warnings.push(`${key} must be boolean`);
