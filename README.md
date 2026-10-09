@@ -53,6 +53,7 @@ See the [font setup guide and Plain text preview](https://github.com/michaelmjhh
 - **Subagent costs:** colored per-child cost curves from pi-subagents accounting events, with matching legends and real observation markers. Open `/atelier` → **Subagent usage** (or `/atelier usage`) for a framed, larger graph, keyboard focus and individual reply costs. Kitty-compatible terminals display smooth native graphics; other terminals use text strokes.
 - **Session visibility:** model, thinking level, context, token usage, cost, and session details in a compact status rail and sidebar.
 - **Live activity:** agent, tool, and subagent lifecycle activity, including queued, running, detached, paused, attention, timeout, completion, and failure states.
+- **MCP visibility:** connected MCP server namespaces and their exposed tool counts, derived from Pi's public tool registry.
 - **Workspace context:** a compact project-titled panel with workspace identity, read-only Git status, or Jujutsu workspace and last-snapshotted status; Agent model and activity remain independently configurable.
 - **Personalization:** display presets, configurable segments and panels, working labels, selectable or custom color schemes, optional Nerd Font icons, and model and tool controls.
 
@@ -154,6 +155,7 @@ Pi Atelier:
 - Does not read untracked file contents
 - Reads project configuration only for trusted projects
 - Does not include prompts or responses in notifications
+- Reads connected MCP server namespaces and tool counts only from Pi's public in-memory tool registry; it does not read MCP configuration, logs, or credentials
 - Accepts contributed sidebar presentation data only through Pi's local event bus; contributors receive no Atelier network or credential access
 
 ## Development
