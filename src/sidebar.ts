@@ -226,7 +226,8 @@ function panelRows(
 	const innerWidth = Math.max(0, safeWidth - 4);
 	const sanitizedTitle = sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS);
 	const safeTitle = preserveTitleCase ? sanitizedTitle : properCase(sanitizedTitle);
-	const crownPrefix = `╭─ ${jewel} `;
+	const stateMarker = collapsed ? "▸" : "▾";
+	const crownPrefix = `╭─ ${jewel} ${stateMarker} `;
 	const crownFill = "─".repeat(
 		Math.max(0, safeWidth - visibleWidth(crownPrefix) - visibleWidth(safeTitle) - 2),
 	);
@@ -246,6 +247,7 @@ function valueRow(value: string | undefined, palette: AtelierPalette, role: Pale
 }
 
 const COMPACT_SIDEBAR_MAX_WIDTH = 39;
+const SIDEBAR_DYNAMIC_RENDER_INTERVAL_MS = 400;
 
 interface SidebarLayout {
 	showToolNames: boolean;
@@ -510,7 +512,9 @@ function contextRows(
 	}
 	const role = contextRole(snapshot, config);
 	const percent = Math.max(0, metrics.contextPercent);
-	const percentText = `${percent.toFixed(1)}%`;
+	const severity =
+		!colorEnabled && role === "error" ? "DANGER " : !colorEnabled && role === "warning" ? "WARN " : "";
+	const percentText = `${severity}${percent.toFixed(1)}%`;
 	const percentWidth = Math.max(6, visibleWidth(percentText));
 	const meterWidth = Math.max(0, width - percentWidth - 2);
 	const units = Math.min(
@@ -1279,8 +1283,13 @@ function measureGroups(groups: readonly SidebarGroup[]): number {
 	return height;
 }
 
-function composeGroups(groups: readonly SidebarGroup[], height: number): SidebarGroup[] {
-	let candidate = groups.filter((group) => group.rows.length > 0);
+interface ComposedSidebarGroups {
+	groups: SidebarGroup[];
+	hiddenPanelIds: string[];
+}
+
+function compactGroups(groups: readonly SidebarGroup[], height: number): SidebarGroup[] {
+	let candidate = [...groups];
 	// Recount cheap row metadata after removal so newly adjacent groups share panel chrome.
 	// Painting happens only after selection, never for the discarded candidates.
 	while (measureGroups(candidate) > height) {
@@ -1313,6 +1322,22 @@ function composeGroups(groups: readonly SidebarGroup[], height: number): Sidebar
 		);
 	}
 	return candidate;
+}
+
+function composeGroups(groups: readonly SidebarGroup[], height: number): ComposedSidebarGroups {
+	const source = groups.filter((group) => group.rows.length > 0);
+	const sourcePanelIds = new Set(source.flatMap((group) => (group.panelId ? [group.panelId] : [])));
+	const hiddenPanelIds = (candidate: readonly SidebarGroup[]): string[] => {
+		const visible = new Set(candidate.flatMap((group) => (group.panelId ? [group.panelId] : [])));
+		return [...sourcePanelIds].filter((panelId) => !visible.has(panelId));
+	};
+	let candidate = compactGroups(source, height);
+	let hidden = hiddenPanelIds(candidate);
+	if (hidden.length > 0 && height > 0) {
+		candidate = compactGroups(source, Math.max(0, height - 1));
+		hidden = hiddenPanelIds(candidate);
+	}
+	return { groups: candidate, hiddenPanelIds: hidden };
 }
 
 export interface SidebarRenderOptions {
@@ -1359,7 +1384,10 @@ export function renderSidebarFrame(
 			panel: "AGENT",
 			panelId: "agent",
 			panelRole: snapshot.activity,
-			panelJewel: snapshot.activity === "working" && Math.floor(now / 400) % 2 === 1 ? "✧" : "✦",
+			panelJewel:
+				snapshot.activity === "working" && Math.floor(now / SIDEBAR_DYNAMIC_RENDER_INTERVAL_MS) % 2 === 1
+					? "✧"
+					: "✦",
 			rows: agentRows(snapshot, panelContentWidth, palette, theme),
 			required: true,
 			dropRank: Number.POSITIVE_INFINITY,
@@ -1517,7 +1545,24 @@ export function renderSidebarFrame(
 		});
 	}
 	const composed = composeGroups(ordered, safeHeight);
-	const groupFrame = renderGroupsFrame(composed, contentWidth, palette, theme, collapsedPanelIds);
+	const hiddenCount = composed.hiddenPanelIds.length;
+	const visibleGroups: SidebarGroup[] = hiddenCount
+		? [
+				{
+					name: "hiddenPanels",
+					rows: [
+						palette.paint(
+							"muted",
+							`${hiddenCount} ${hiddenCount === 1 ? "panel" : "panels"} hidden · /atelier display`,
+						),
+					],
+					required: true,
+					dropRank: Number.POSITIVE_INFINITY,
+				},
+				...composed.groups,
+			]
+		: composed.groups;
+	const groupFrame = renderGroupsFrame(visibleGroups, contentWidth, palette, theme, collapsedPanelIds);
 	return {
 		lines: renderDock(groupFrame.rows, safeWidth, safeHeight, palette, resizing),
 		hitRegions: groupFrame.hitRegions,
@@ -1543,6 +1588,7 @@ export interface SidebarComponentOptions {
 	getSnapshot(): SidebarSnapshot;
 	getConfig(): AtelierConfig;
 	getHeight(): number;
+	getRevision?(): number;
 	isResizing?(): boolean;
 	canRenderImages?(): boolean;
 	onFrame?(frame: SidebarFrame): void;
@@ -1571,6 +1617,7 @@ function renderSidebarError(error: unknown, width: number, height: number, resiz
 
 export function createSidebarComponent(options: SidebarComponentOptions): Component {
 	const imageOwner = {};
+	let cached: { key: string; frame: SidebarFrame } | undefined;
 	return {
 		render(width) {
 			const height = options.getHeight();
@@ -1578,32 +1625,45 @@ export function createSidebarComponent(options: SidebarComponentOptions): Compon
 			try {
 				resizing = options.isResizing?.() ?? false;
 				const collapsedPanelIds = options.getCollapsedPanelIds?.();
+				const canRenderImages = options.canRenderImages?.();
+				const revision = options.getRevision?.();
+				const cacheable = revision !== undefined && Number.isSafeInteger(revision);
+				const now = Date.now();
+				const timeBucket = Math.floor(now / SIDEBAR_DYNAMIC_RENDER_INTERVAL_MS);
+				const colorEnabled = options.colorEnabled ?? true;
+				const collapsedKey = collapsedPanelIds ? [...collapsedPanelIds].sort().join("\u0000") : "";
+				const key = `${revision ?? "uncached"}:${timeBucket}:${width}:${height}:${resizing ? 1 : 0}:${canRenderImages === false ? 0 : 1}:${colorEnabled ? 1 : 0}:${options.theme.name ?? ""}:${collapsedKey}`;
+				if (cacheable && cached?.key === key) return cached.frame.lines;
 				const frame = renderSidebarFrame(
 					options.getSnapshot(),
 					options.getConfig(),
 					options.theme,
 					width,
 					height,
-					options.colorEnabled ?? true,
-					Date.now(),
+					colorEnabled,
+					now,
 					resizing,
 					{
 						...(collapsedPanelIds ? { collapsedPanelIds } : {}),
 						chartGraphics: {
 							imageOwner: options.canRenderImages ? imageOwner : undefined,
-							suspendPlot: options.canRenderImages?.() === false,
+							suspendPlot: canRenderImages === false,
 						},
 					},
 				);
+				cached = cacheable ? { key, frame } : undefined;
 				options.onFrame?.(frame);
 				return frame.lines;
 			} catch (error) {
+				cached = undefined;
 				const lines = renderSidebarError(error, width, height, resizing);
 				options.onFrame?.({ lines, hitRegions: [] });
 				return lines;
 			}
 		},
-		invalidate() {},
+		invalidate() {
+			cached = undefined;
+		},
 	};
 }
 
@@ -1615,6 +1675,8 @@ export interface SidebarController {
 	beginResize(): boolean;
 	isResizing(): boolean;
 	getWidth(): number;
+	setPanelCollapsed(panelId: string, collapsed?: boolean): boolean;
+	isPanelCollapsed(panelId: string): boolean;
 	requestRender(): void;
 	dispose(): void;
 }
@@ -1704,6 +1766,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 	let requestOverlayRender: (() => void) | undefined;
 	let overlayHandle: OverlayHandle | undefined;
 	let animationTimer: ReturnType<typeof setInterval> | undefined;
+	let renderRevision = 0;
 	const collapsedPanelIds = new Set<string>();
 	const animationIntervalMs = Math.max(1, Math.trunc(options.animationIntervalMs ?? 1_000));
 
@@ -1725,20 +1788,30 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 		}
 	};
 
+	const setPanelCollapsed = (panelId: string, collapsed?: boolean): boolean => {
+		const next = collapsed ?? !collapsedPanelIds.has(panelId);
+		if (next === collapsedPanelIds.has(panelId)) return next;
+		if (next) collapsedPanelIds.add(panelId);
+		else collapsedPanelIds.delete(panelId);
+		renderRevision += 1;
+		safely(() => requestOverlayRender?.());
+		return next;
+	};
+
 	const split: SplitPaneController = createSplitPaneController({
 		...(typeof options.ctx.ui.onTerminalInput === "function"
 			? { subscribeInput: (handler) => options.ctx.ui.onTerminalInput(handler) }
 			: {}),
 		onResizeChange: () => {
+			renderRevision += 1;
 			safely(() => requestOverlayRender?.());
 		},
 		onSidebarAction: (action) => {
 			if (action.type === "toggle-panel-body") {
-				if (collapsedPanelIds.has(action.panelId)) collapsedPanelIds.delete(action.panelId);
-				else collapsedPanelIds.add(action.panelId);
-				safely(() => requestOverlayRender?.());
+				setPanelCollapsed(action.panelId);
 				return;
 			}
+			renderRevision += 1;
 			options.onSidebarAction?.(action);
 		},
 		...(options.onWarning ? { onWarning: options.onWarning } : {}),
@@ -1760,6 +1833,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 		}
 		if (animationTimer) return;
 		animationTimer = setInterval(() => {
+			renderRevision += 1;
 			safely(() => requestOverlayRender?.());
 		}, animationIntervalMs);
 		animationTimer.unref?.();
@@ -1841,6 +1915,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 						getSnapshot: binding.getSnapshot,
 						getConfig: binding.getConfig,
 						getHeight: () => tui.terminal.rows,
+						getRevision: () => renderRevision,
 						isResizing: binding.isResizing,
 						canRenderImages: () => !hasCapturingOverlay(tui),
 						onFrame: (frame) => split.setSidebarHitRegions(frame.hitRegions),
@@ -1897,7 +1972,10 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 		beginResize: split.beginResize,
 		isResizing: split.isResizing,
 		getWidth: split.getSidebarWidth,
+		setPanelCollapsed,
+		isPanelCollapsed: (panelId) => collapsedPanelIds.has(panelId),
 		requestRender() {
+			renderRevision += 1;
 			// Still refresh the overlay if adapter reconciliation fails.
 			if (!safely(split.requestRender)) safely(() => requestOverlayRender?.());
 			syncAnimation();

@@ -120,7 +120,7 @@ function activeActivity(): RunActivitySnapshot {
 function contentRows(lines: string[]) {
 	return lines.map((line) => {
 		const row = stripAnsi(line).slice(2).trimEnd();
-		const title = row.match(/^╭─ [✦✧] (.*?) ─*╮$/u)?.[1];
+		const title = row.match(/^╭─ [✦✧] [▸▾] (.*?) ─*╮$/u)?.[1];
 		if (title) return title;
 		if (/^╰─+╯$/.test(row)) return "";
 		if (row.startsWith("│ ") && row.endsWith(" │")) return row.slice(2, -2).trimEnd();
@@ -245,8 +245,8 @@ describe("sidebar snapshot and layout", () => {
 		expect(lines.every((line) => visibleWidth(line) <= 44)).toBe(true);
 		expect(lines.every((line) => stripAnsi(line).startsWith("  "))).toBe(true);
 		expect(lines.every((line) => !stripAnsi(line).startsWith("│ "))).toBe(true);
-		expect(text).toContain("╭─ ✦ Agent ");
-		expect(text).toContain("╭─ ✦ Usage ");
+		expect(text).toContain("╭─ ✦ ▾ Agent ");
+		expect(text).toContain("╭─ ✦ ▾ Usage ");
 		expect(text).toContain("╰────────────────");
 		expect(text).not.toContain("ATELIER");
 		expect(text).not.toMatch(/PI ATELIER|ATELIER|▛▀▜/);
@@ -323,10 +323,10 @@ describe("sidebar snapshot and layout", () => {
 	it("pulses only the working Agent jewel while keeping other crowns stable", () => {
 		const bright = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 0).join("\n");
 		const soft = renderSidebarLines(snapshot(), DEFAULT_CONFIG, theme, 44, 60, false, 400).join("\n");
-		expect(bright).toContain("╭─ ✦ Agent ");
-		expect(soft).toContain("╭─ ✧ Agent ");
-		expect(bright).toContain("╭─ ✦ Usage ");
-		expect(soft).toContain("╭─ ✦ Usage ");
+		expect(bright).toContain("╭─ ✦ ▾ Agent ");
+		expect(soft).toContain("╭─ ✧ ▾ Agent ");
+		expect(bright).toContain("╭─ ✦ ▾ Usage ");
+		expect(soft).toContain("╭─ ✦ ▾ Usage ");
 	});
 
 	it("tints panel crowns with their semantic jewel roles", () => {
@@ -340,10 +340,10 @@ describe("sidebar snapshot and layout", () => {
 			true,
 			0,
 		);
-		expect(fg).toHaveBeenCalledWith("mdHeading", "╭─ ✦ ");
-		expect(fg).toHaveBeenCalledWith("thinkingLow", "╭─ ✦ ");
-		expect(fg).toHaveBeenCalledWith("thinkingHigh", "╭─ ✦ ");
-		expect(fg).toHaveBeenCalledWith("syntaxType", "╭─ ✦ ");
+		expect(fg).toHaveBeenCalledWith("mdHeading", "╭─ ✦ ▾ ");
+		expect(fg).toHaveBeenCalledWith("thinkingLow", "╭─ ✦ ▾ ");
+		expect(fg).toHaveBeenCalledWith("thinkingHigh", "╭─ ✦ ▾ ");
+		expect(fg).toHaveBeenCalledWith("syntaxType", "╭─ ✦ ▾ ");
 	});
 
 	it("matches the representative 44x60 no-color docked rail", () => {
@@ -1013,6 +1013,9 @@ describe("sidebar snapshot and layout", () => {
 		const frame = renderSidebarFrame(snapshot(), DEFAULT_CONFIG, theme, 44, 12, false);
 
 		expect(contentRows(frame.lines)).not.toContain("Tools");
+		expect(contentRows(frame.lines)).toContainEqual(
+			expect.stringMatching(/panels hidden · \/atelier display/),
+		);
 		expect(frame.hitRegions).not.toContainEqual(
 			expect.objectContaining({ action: { type: "toggle-tool-names" } }),
 		);
@@ -1021,9 +1024,10 @@ describe("sidebar snapshot and layout", () => {
 		);
 	});
 
-	it("publishes full-panel hit regions and hides collapsed widget bodies", () => {
+	it("marks expanded and collapsed panels while publishing full-frame hit regions", () => {
 		const frame = renderSidebarFrame(snapshot(), DEFAULT_CONFIG, theme, 44, 64, false, 0);
 		const rows = contentRows(frame.lines);
+		expect(stripAnsi(frame.lines.join("\n"))).toContain("▾ pi-atelier");
 		const workspaceY = rows.indexOf("pi-atelier") + 1;
 		const agentY = rows.indexOf("Agent") + 1;
 
@@ -1040,6 +1044,7 @@ describe("sidebar snapshot and layout", () => {
 			collapsedPanelIds: new Set(["workspace"]),
 		});
 		const collapsedRows = contentRows(collapsed.lines);
+		expect(stripAnsi(collapsed.lines.join("\n"))).toContain("▸ pi-atelier");
 		expect(collapsedRows).toContain("pi-atelier");
 		expect(collapsedRows).toContain("feature/sidebar ▲");
 		expect(collapsed.hitRegions).toContainEqual({
@@ -1192,7 +1197,8 @@ describe("sidebar snapshot and layout", () => {
 				36,
 				false,
 			);
-			expect(lines.join("\n")).toContain(`${percent.toFixed(1)}%`);
+			const severity = percent >= 90 ? "DANGER " : percent >= 70 ? "WARN " : "";
+			expect(lines.join("\n")).toContain(`${severity}${percent.toFixed(1)}%`);
 			expect(fg).not.toHaveBeenCalled();
 			expect(lines.join("\n")).not.toMatch(/\u001b\[[0-?]*[ -/]*[@-~]/);
 		},
@@ -1508,6 +1514,45 @@ describe("sidebar component and overlay", () => {
 		expect(collapsedRows).toContain("pi-atelier");
 		expect(collapsedRows).toContain("feature/sidebar ▲");
 		expect(DEFAULT_CONFIG.sidebarPanelLayout.find((entry) => entry.id === "workspace")?.visible).toBe(true);
+	});
+
+	it("reuses unchanged frames and invalidates them by time, theme, revision, or TUI invalidation", () => {
+		vi.useFakeTimers();
+		vi.setSystemTime(0);
+		let revision = 0;
+		const getSnapshot = vi.fn(snapshot);
+		const mutableTheme = { ...theme };
+		const component = createSidebarComponent({
+			getSnapshot,
+			getConfig: () => DEFAULT_CONFIG,
+			getHeight: () => 60,
+			getRevision: () => revision,
+			theme: mutableTheme,
+		});
+
+		const first = component.render(44);
+		expect(component.render(44)).toBe(first);
+		expect(stripAnsi(first.join("\n"))).toContain("✦ ▾ Agent");
+		expect(getSnapshot).toHaveBeenCalledOnce();
+
+		vi.setSystemTime(400);
+		const animated = component.render(44);
+		expect(animated).not.toBe(first);
+		expect(stripAnsi(animated.join("\n"))).toContain("✧ ▾ Agent");
+		expect(getSnapshot).toHaveBeenCalledTimes(2);
+
+		mutableTheme.name = "light";
+		component.render(44);
+		expect(getSnapshot).toHaveBeenCalledTimes(3);
+
+		revision += 1;
+		component.render(44);
+		expect(getSnapshot).toHaveBeenCalledTimes(4);
+
+		// Pi invokes Component.invalidate() when theme-dependent output must be rebuilt.
+		component.invalidate();
+		component.render(44);
+		expect(getSnapshot).toHaveBeenCalledTimes(5);
 	});
 
 	it("cleans composed Resize state and restores full-width rendering on hide", () => {

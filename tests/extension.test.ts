@@ -5,6 +5,7 @@ import { AtelierEditor } from "../src/editor.js";
 
 const mousePress = (x: number, y: number) => `\u001b[<0;${x};${y}M`;
 const mouseRelease = (x: number, y: number) => `\u001b[<0;${x};${y}m`;
+const stripAnsi = (text: string) => text.replace(/\u001b\[[0-?]*[ -/]*[@-~]/g, "");
 
 import { settleMicrotasks } from "./helpers/async.js";
 import {
@@ -264,6 +265,38 @@ describe("extension registration", () => {
 		expect(h.overlays[0]?.done).toHaveBeenCalledOnce();
 	});
 
+	it("controls visible panel bodies through keyboard-accessible commands", async () => {
+		const h = harness();
+		await start(h);
+		expect(stripAnsi(renderOverlayText(h, 0, 44))).toContain("▾ Agent");
+
+		await command(h, "sidebar panel agent closed");
+		expect(stripAnsi(renderOverlayText(h, 0, 44))).toContain("▸ Agent");
+		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Sidebar panel agent collapsed", "info");
+
+		await command(h, "sidebar panel agent open");
+		expect(stripAnsi(renderOverlayText(h, 0, 44))).toContain("▾ Agent");
+		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith("Sidebar panel agent expanded", "info");
+
+		await command(h, "sidebar panel agent");
+		expect(stripAnsi(renderOverlayText(h, 0, 44))).toContain("▸ Agent");
+	});
+
+	it("rejects invalid or unavailable panel commands", async () => {
+		const h = harness();
+		await start(h);
+		await command(h, "sidebar panel invalid");
+		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith(
+			"Usage: /atelier sidebar panel <id> [toggle|open|closed]",
+			"warning",
+		);
+		await command(h, "sidebar panel vendor:missing closed");
+		expect(h.ctx.ui.notify).toHaveBeenLastCalledWith(
+			"Sidebar panel vendor:missing is not currently visible",
+			"warning",
+		);
+	});
+
 	it("toggles and persists sidebar tool-name details", async () => {
 		const h = harness();
 		await start(h);
@@ -311,7 +344,10 @@ describe("extension registration", () => {
 		const h = harness();
 		await start(h);
 		await command(h, args);
-		expect(h.ctx.ui.notify).toHaveBeenCalledWith("Usage: /atelier sidebar [on|off]", "warning");
+		expect(h.ctx.ui.notify).toHaveBeenCalledWith(
+			"Usage: /atelier sidebar [on|off|tools [on|off]|panel <id> [toggle|open|closed]]",
+			"warning",
+		);
 		expect(h.custom).toHaveBeenCalledOnce();
 	});
 
@@ -602,13 +638,18 @@ describe("extension registration", () => {
 			},
 		);
 		footer.render(120);
-		expect(h.overlays[0]?.requestRender).toHaveBeenCalled();
+		expect(h.overlays[0]?.requestRender).not.toHaveBeenCalled();
+		await settleMicrotasks();
+		expect(h.overlays[0]?.requestRender).toHaveBeenCalledOnce();
 		h.overlays[0]?.requestRender.mockClear();
 		footer.render(120);
+		await settleMicrotasks();
 		expect(h.overlays[0]?.requestRender).not.toHaveBeenCalled();
 		statuses = new Map([["one", "extension two"]]);
 		footer.render(120);
-		expect(h.overlays[0]?.requestRender).toHaveBeenCalled();
+		expect(h.overlays[0]?.requestRender).not.toHaveBeenCalled();
+		await settleMicrotasks();
+		expect(h.overlays[0]?.requestRender).toHaveBeenCalledOnce();
 	});
 
 	it("collapses activated tool names at narrow sidebar widths", async () => {

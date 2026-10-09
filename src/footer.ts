@@ -395,11 +395,15 @@ function buildItems(
 		if (segment === "context") {
 			const metrics = state.metrics;
 			const role = contextRole(metrics, config);
-			const contextCompact = icon(
-				symbols.context,
-				paintValue(percentValue(metrics.contextPercent, 1), role, palette),
-				role,
-			);
+			const contextPercent = percentValue(metrics.contextPercent, 1);
+			const contextDisplay =
+				!colorEnabled && contextPercent.available && (role === "warning" || role === "error")
+					? {
+							...contextPercent,
+							text: `${role === "error" ? "DANGER" : "WARN"} ${contextPercent.text}`,
+						}
+					: contextPercent;
+			const contextCompact = icon(symbols.context, paintValue(contextDisplay, role, palette), role);
 			const contextFull = `${contextCompact}${
 				Number.isFinite(metrics.contextWindow) && metrics.contextWindow > 0
 					? palette.paint("muted", ` / ${formatTokens(metrics.contextWindow)}`)
