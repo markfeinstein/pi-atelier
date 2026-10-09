@@ -4,7 +4,7 @@
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue)](https://github.com/michaelmjhhhh/pi-atelier/blob/main/LICENSE)
 [![Pi compatibility: 0.84.0 or newer](https://img.shields.io/badge/Pi-%3E%3D0.84.0-violet)](#requirements)
 
-Keep model, context, Git status, usage, and tool activity visible while you work in [Pi](https://pi.dev).
+Keep model, context, version-control status, usage, and tool activity visible while you work in [Pi](https://pi.dev).
 
 Pi Atelier adds a responsive status rail below the composer by default, an optional composer-embedded rail, and a live activity sidebar to your terminal.
 
@@ -53,7 +53,7 @@ See the [font setup guide and Plain text preview](https://github.com/michaelmjhh
 - **Subagent costs:** colored per-child cost curves from pi-subagents accounting events, with matching legends and real observation markers. Open `/atelier` → **Subagent usage** (or `/atelier usage`) for a framed, larger graph, keyboard focus and individual reply costs. Kitty-compatible terminals display smooth native graphics; other terminals use text strokes.
 - **Session visibility:** model, thinking level, context, token usage, cost, and session details in a compact status rail and sidebar.
 - **Live activity:** agent, tool, and subagent lifecycle activity, including queued, running, detached, paused, attention, timeout, completion, and failure states.
-- **Workspace context:** workspace identity and read-only Git status alongside your session.
+- **Workspace context:** a unified project-and-agent panel with workspace identity, active model state, read-only Git status, or Jujutsu workspace and last-snapshotted status.
 - **Personalization:** display presets, configurable segments and panels, working labels, selectable or custom color schemes, optional Nerd Font icons, and model and tool controls.
 
 No telemetry or external network requests. See [Privacy](#privacy).
@@ -149,7 +149,7 @@ Pi Atelier:
 - Does not collect telemetry or analytics
 - Does not store prompts, responses, or credentials
 - For subagent usage, reads local metadata and owner-validated diagnostic event logs; retains only numeric cost/time projections in memory and saves only run IDs and artifact paths in the Pi session. Prompt/reply content in those logs is discarded. Active background runs refresh until they settle
-- Uses read-only Git inspection for workspace status only after the project is trusted
+- Uses read-only Git or Jujutsu inspection for workspace status only after the project is trusted; Jujutsu reads use `--ignore-working-copy`, report the last state Jujutsu snapshotted, and never snapshot or mutate the repository
 - Does not read untracked file contents
 - Reads project configuration only for trusted projects
 - Does not include prompts or responses in notifications

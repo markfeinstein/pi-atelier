@@ -220,10 +220,12 @@ function panelRows(
 	role: PaletteRole,
 	jewel: "✦" | "✧",
 	collapsed = false,
+	preserveTitleCase = false,
 ): string[] {
 	const safeWidth = Math.max(4, Math.trunc(width));
 	const innerWidth = Math.max(0, safeWidth - 4);
-	const safeTitle = properCase(sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS));
+	const sanitizedTitle = sanitizeSidebarPanelText(title, SIDEBAR_PANEL_MAX_TITLE_CHARS);
+	const safeTitle = preserveTitleCase ? sanitizedTitle : properCase(sanitizedTitle);
 	const crownPrefix = `╭─ ${jewel} `;
 	const crownFill = "─".repeat(
 		Math.max(0, safeWidth - visibleWidth(crownPrefix) - visibleWidth(safeTitle) - 2),
@@ -351,14 +353,26 @@ function workspacePulseRows(
 	palette: AtelierPalette,
 ): WorkspacePulseRows {
 	if (pulse.status === "inspecting") return { core: [palette.paint("muted", "inspecting…")], details: [] };
-	if (pulse.status === "not-repo")
-		return { core: [palette.paint("dim", "not a Git repository")], details: [] };
+	if (pulse.status === "not-repo") return { core: [], details: [] };
 	if (pulse.status === "unavailable")
-		return { core: [palette.paint("warning", "Git unavailable")], details: [] };
+		return { core: [palette.paint("warning", "VCS unavailable")], details: [] };
 	if (!("data" in pulse)) return { core: [], details: [] };
 	if (pulse.data.bareRepository) return { core: [palette.paint("muted", "bare repository")], details: [] };
 	const git = pulse.data.snapshot;
 	if (pulse.status === "clean") return { core: [palette.paint("ready", "✓ clean")], details: [] };
+	if (pulse.data.vcs === "jj") {
+		const core =
+			git.trackedFiles > 0
+				? [
+						palette.paint(
+							pulse.status === "stale" ? "warning" : "primary",
+							`${formatPulseCount(git.trackedFiles)} changed`,
+						),
+					]
+				: [];
+		if (git.conflicts > 0) core.push(palette.paint("error", "conflict"));
+		return { core, details: [] };
+	}
 	const tracked = `${formatPulseCount(git.trackedFiles)} tracked`;
 	const lines = `+${formatPulseCount(git.linesAdded)}  −${formatPulseCount(git.linesRemoved)}`;
 	const role = pulse.status === "stale" ? "warning" : "primary";
@@ -389,10 +403,29 @@ function workspacePulseRows(
 
 interface WorkspaceRows {
 	identity: string[];
-	location: string[];
-	pulseCore: string[];
+	metadata: string[];
 	pulseDetails: string[];
 	session: string[];
+}
+
+function packWorkspaceRows(rows: readonly string[], width: number, palette: AtelierPalette): string[] {
+	const packed: string[] = [];
+	let current = "";
+	for (const row of rows.filter(Boolean)) {
+		if (!current) {
+			current = row;
+			continue;
+		}
+		const candidate = `${current} ${palette.paint("dim", "·")} ${row}`;
+		if (visibleWidth(candidate) <= width) {
+			current = candidate;
+			continue;
+		}
+		packed.push(current);
+		current = row;
+	}
+	if (current) packed.push(current);
+	return packed;
 }
 
 function workspaceRows(
@@ -402,13 +435,31 @@ function workspaceRows(
 	_theme: ThemeLike,
 ): WorkspaceRows {
 	const compact = width <= COMPACT_SIDEBAR_MAX_WIDTH - 6;
-	const project = valueRow(snapshot.projectName, palette, "primary");
+	const pulseData = workspacePulseData(snapshot.workspacePulse);
 	const branch = snapshot.branch ? palette.paint("accent", display(snapshot.branch)) : "";
 	const indicator = pulseIndicator(snapshot.workspacePulse);
-	const gitState = branch && indicator.symbol ? palette.paint(indicator.role, indicator.symbol) : "";
-	const identity = branch ? `${project} ${palette.paint("dim", "·")} ${branch} ${gitState}` : project;
-	const identityRows = compact ? [project, ...(branch ? [`${branch} ${gitState}`] : [])] : [identity];
-	const pulseData = workspacePulseData(snapshot.workspacePulse);
+	let identityParts: string[];
+	if (pulseData?.vcs === "jj") {
+		const workspaceName =
+			pulseData.workspaceName && pulseData.workspaceName !== "default"
+				? sanitize(pulseData.workspaceName)
+				: "";
+		const bookmark = pulseData.branch ? sanitize(pulseData.branch) : "";
+		const jjIdentity = [
+			...new Set([workspaceName, bookmark, sanitize(pulseData.revision ?? "")].filter(Boolean)),
+		];
+		identityParts = [palette.paint("muted", "jj"), ...jjIdentity];
+	} else {
+		const divergence = [
+			pulseData?.ahead ? palette.paint("warning", `↑${formatPulseCount(pulseData.ahead)}`) : "",
+			pulseData?.behind ? palette.paint("warning", `↓${formatPulseCount(pulseData.behind)}`) : "",
+		].filter(Boolean);
+		const branchState = branch
+			? `${branch}${indicator.symbol ? ` ${palette.paint(indicator.role, indicator.symbol)}` : ""}`
+			: "";
+		identityParts = [branchState, ...divergence].filter(Boolean);
+	}
+	const identityRows = packWorkspaceRows(identityParts, width, palette);
 	const location = pulseData
 		? [
 				...(pulseData.worktreeName
@@ -418,15 +469,10 @@ function workspaceRows(
 			]
 		: [palette.paint("muted", shortPath(snapshot.cwd))];
 	const pulse = workspacePulseRows(snapshot.workspacePulse, compact, palette);
+	const metadata = packWorkspaceRows([...location, ...pulse.core], width, palette);
 	const sessionName = snapshot.sessionName ? sanitize(snapshot.sessionName) : "";
-	const session = [
-		...(sessionName ? [palette.paint("primary", sessionName)] : []),
-		`${palette.paint("primary", `${finiteCount(snapshot.branchEntryCount)} entries`)} ${palette.paint(
-			"dim",
-			"·",
-		)} ${palette.paint(snapshot.persisted ? "ready" : "muted", snapshot.persisted ? "persisted" : "ephemeral")}`,
-	];
-	return { identity: identityRows, location, pulseCore: pulse.core, pulseDetails: pulse.details, session };
+	const session = sessionName ? [palette.paint("primary", sessionName)] : [];
+	return { identity: identityRows, metadata, pulseDetails: pulse.details, session };
 }
 
 function contextRole(snapshot: SidebarSnapshot, config: AtelierConfig): PaletteRole {
@@ -659,6 +705,7 @@ interface SidebarGroup {
 	panelId?: string;
 	panelRole?: PaletteRole;
 	panelJewel?: "✦" | "✧";
+	preservePanelTitleCase?: boolean;
 	rows: string[];
 	rowActions?: Array<SidebarAction | undefined>;
 	required: boolean;
@@ -722,6 +769,7 @@ function renderGroupsFrame(
 					group.panelRole ?? "accent",
 					group.panelJewel ?? "✦",
 					collapsed,
+					group.preservePanelTitleCase ?? false,
 				),
 			);
 			if (panelId && panelId !== "__empty__") {
@@ -1294,6 +1342,12 @@ export function renderSidebarFrame(
 	const chartGraphics = options.chartGraphics ?? {};
 	const toolNameRows = layout.showToolNames ? activeToolNameRows(snapshot, panelContentWidth, palette) : [];
 	const workspace = workspaceRows(snapshot, panelContentWidth, palette, theme);
+	const workspacePanelTitle = sanitize(snapshot.projectName) || "Workspace";
+	const workspaceVisible =
+		config.sidebarPanelLayout.find((entry) => entry.id === "workspace")?.visible === true;
+	const agentVisible = config.sidebarPanelLayout.find((entry) => entry.id === "agent")?.visible === true;
+	const mergeAgentIntoWorkspace = workspaceVisible && agentVisible;
+	const workspaceJewel = snapshot.activity === "working" && Math.floor(now / 400) % 2 === 1 ? "✧" : "✦";
 	const groups: SidebarGroup[] = [
 		...(resizing
 			? [
@@ -1306,11 +1360,60 @@ export function renderSidebarFrame(
 				]
 			: []),
 		{
-			name: "agent",
-			panel: "AGENT",
-			panelId: "agent",
+			name: "workspaceCore",
+			panel: "WORKSPACE",
+			panelTitle: workspacePanelTitle,
+			preservePanelTitleCase: true,
+			panelId: "workspace",
 			panelRole: snapshot.activity,
-			panelJewel: snapshot.activity === "working" && Math.floor(now / 400) % 2 === 1 ? "✧" : "✦",
+			panelJewel: workspaceJewel,
+			rows: workspace.identity,
+			required: false,
+			dropRank: 30,
+		},
+		{
+			name: "workspaceMetadata",
+			panel: "WORKSPACE",
+			panelTitle: workspacePanelTitle,
+			preservePanelTitleCase: true,
+			panelId: "workspace",
+			panelRole: snapshot.activity,
+			panelJewel: workspaceJewel,
+			rows: workspace.metadata,
+			required: false,
+			dropRank: 30,
+		},
+		{
+			name: "workspaceDetails",
+			panel: "WORKSPACE",
+			panelTitle: workspacePanelTitle,
+			preservePanelTitleCase: true,
+			panelId: "workspace",
+			panelRole: snapshot.activity,
+			panelJewel: workspaceJewel,
+			rows: workspace.pulseDetails,
+			required: false,
+			dropRank: 6,
+		},
+		{
+			name: "workspaceSession",
+			panel: "WORKSPACE",
+			panelTitle: workspacePanelTitle,
+			preservePanelTitleCase: true,
+			panelId: "workspace",
+			panelRole: snapshot.activity,
+			panelJewel: workspaceJewel,
+			rows: workspace.session,
+			required: false,
+			dropRank: 4,
+		},
+		{
+			name: "agent",
+			panel: mergeAgentIntoWorkspace ? "WORKSPACE" : "AGENT",
+			...(mergeAgentIntoWorkspace ? { panelTitle: workspacePanelTitle, preservePanelTitleCase: true } : {}),
+			panelId: mergeAgentIntoWorkspace ? "workspace" : "agent",
+			panelRole: snapshot.activity,
+			panelJewel: workspaceJewel,
 			rows: agentRows(snapshot, panelContentWidth, palette, theme),
 			required: true,
 			dropRank: Number.POSITIVE_INFINITY,
@@ -1333,51 +1436,6 @@ export function renderSidebarFrame(
 			rows: todosRows(snapshot, palette),
 			required: false,
 			dropRank: 90,
-		},
-		{
-			name: "workspaceCore",
-			panel: "WORKSPACE",
-			panelId: "workspace",
-			panelRole: "accent",
-			rows: workspace.identity,
-			required: false,
-			dropRank: 30,
-		},
-		{
-			name: "workspaceLocation",
-			panel: "WORKSPACE",
-			panelId: "workspace",
-			panelRole: "accent",
-			rows: workspace.location,
-			required: false,
-			dropRank: 5,
-		},
-		{
-			name: "workspaceCore",
-			panel: "WORKSPACE",
-			panelId: "workspace",
-			panelRole: "accent",
-			rows: workspace.pulseCore,
-			required: false,
-			dropRank: 30,
-		},
-		{
-			name: "workspaceDetails",
-			panel: "WORKSPACE",
-			panelId: "workspace",
-			panelRole: "accent",
-			rows: workspace.pulseDetails,
-			required: false,
-			dropRank: 6,
-		},
-		{
-			name: "workspaceSession",
-			panel: "WORKSPACE",
-			panelId: "workspace",
-			panelRole: "accent",
-			rows: workspace.session,
-			required: false,
-			dropRank: 4,
 		},
 		{
 			name: "usageContext",
