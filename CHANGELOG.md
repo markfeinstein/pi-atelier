@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+- Add Auto and Manual sidebar presentation modes. Auto collapses narrow terminals with hysteresis while preserving the preferred width; Manual keeps the existing resize behavior. Use `/atelier sidebar auto|manual` or the Atelier controls menu.
+- Accept upstream-compatible contributed `keyValues` with semantic `success`/`caution` roles and optional responsive progress meters, normalized into the fork's bounded rich-panel protocol while retaining mandatory plain-row fallback.
+- Add a global preference to suppress randomized working phrases while retaining the static WORKING state, activity animation, and Agent/Status Rail visibility, adapted from wlad031's focused fork change.
+- Render shared context and prefill meter tracks with dim glyphs instead of a hardcoded dark background so they remain readable with light and custom terminal backgrounds.
 - Show allow-listed local-model prompt prefill progress, uncached token counts, and first-token ETA in a transient Sidebar panel on Pi 0.99 or newer.
 - Copy a fullscreen user prompt with an unmodified single left click while preserving host-owned links, drag selection, modifier clicks, composer input, and lifecycle restoration.
 - Add keyboard-accessible Sidebar panel collapse commands, explicit expanded/collapsed crowns, height-compaction notices, cached unchanged frames and non-color context severity labels; defer extension-status redraws outside footer rendering and align contributed-panel interaction documentation with runtime behavior.

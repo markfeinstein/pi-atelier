@@ -131,6 +131,8 @@ export interface AtelierConfig extends DisplaySettings {
 	/** Atelier-owned rich contributed-panel collapse state, keyed by panel ID. */
 	contributedPanelCollapsed: Record<string, boolean>;
 	completionNotifications: boolean;
+	/** Show a static WORKING label instead of the randomized working phrase. */
+	hideWorkingLabel: boolean;
 	prefillEnabled: boolean;
 	prefillViews: readonly PrefillView[];
 	/** Providers that may receive the non-standard `return_progress` request field. */
@@ -194,6 +196,7 @@ export const DEFAULT_CONFIG: AtelierConfig = {
 	sidebarPanelLayout: DEFAULT_SIDEBAR_PANEL_LAYOUT.map((entry) => ({ ...entry })),
 	contributedPanelCollapsed: {},
 	completionNotifications: true,
+	hideWorkingLabel: false,
 	prefillEnabled: true,
 	prefillViews: ["percent", "tokens", "eta"],
 	prefillProviders: ["llama.cpp"],

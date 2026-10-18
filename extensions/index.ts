@@ -19,13 +19,14 @@ import { AtelierEditor } from "../src/editor.js";
 import { formatErrorText } from "../src/error-text.js";
 import { type AtelierFooterComponent, createFooterComponent, type ThemeLike } from "../src/footer.js";
 import { createImageCompositorBinding } from "../src/image-compositor.js";
+import { summarizeMcpServers } from "../src/mcp-servers.js";
 import {
 	type DisplaySettingsRuntime,
 	type OverlayLifetime,
 	openAtelierControlCenter,
 	openDisplaySettingsWorkspace,
+	sidebarStatusLabel,
 } from "../src/menu.js";
-import { summarizeMcpServers } from "../src/mcp-servers.js";
 import { isColorEnabled } from "../src/palette.js";
 import {
 	createPrefillThrottle,
@@ -85,6 +86,7 @@ export type {
 	SidebarPanelEvent,
 	SidebarPanelEventTransport,
 	SidebarPanelNode,
+	SidebarPanelKeyValueRow,
 	SidebarPanelRegisterEvent,
 	SidebarPanelRegistry,
 	SidebarPanelRegistryOptions,
@@ -652,7 +654,10 @@ export default function atelierExtension(
 			targetRuntime,
 			join(getAgentDir(), "pi-atelier.json"),
 			{
-				isVisible: () => activeSession === current && targetSidebar.isVisible(),
+				getStatus: () => targetSidebar.getStatus(),
+				setMode: (mode) => {
+					if (enabled && activeSession === current) targetSidebar.setMode(mode);
+				},
 				toggle: () => {
 					if (enabled && activeSession === current) targetSidebar.toggle();
 				},
@@ -917,17 +922,23 @@ export default function atelierExtension(
 				}
 				if (
 					extra.length > 0 ||
-					(sidebarAction !== undefined && sidebarAction !== "on" && sidebarAction !== "off")
+					(sidebarAction !== undefined &&
+						sidebarAction !== "auto" &&
+						sidebarAction !== "manual" &&
+						sidebarAction !== "on" &&
+						sidebarAction !== "off")
 				) {
 					ctx.ui.notify(
-						"Usage: /atelier sidebar [on|off|tools [on|off]|panel <id> [toggle|open|closed]]",
+						"Usage: /atelier sidebar [auto|manual|on|off|tools [on|off]|panel <id> [toggle|open|closed]]",
 						"warning",
 					);
 					return;
 				}
-				if (sidebarAction === "on") current.sidebar.show();
+				if (sidebarAction === "auto" || sidebarAction === "manual") current.sidebar.setMode(sidebarAction);
+				else if (sidebarAction === "on") current.sidebar.show();
 				else if (sidebarAction === "off") current.sidebar.hide();
 				else current.sidebar.toggle();
+				ctx.ui.notify(`Sidebar: ${sidebarStatusLabel(current.sidebar.getStatus())}`, "info");
 				return;
 			}
 			if (action === "disable") {

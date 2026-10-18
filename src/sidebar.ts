@@ -8,7 +8,7 @@ import type { McpServerSummary } from "./mcp-servers.js";
 import { subcellMeter } from "./meters.js";
 import { aggregateMetrics, formatTokens } from "./metrics.js";
 import { type AtelierPalette, createPalette, type PaletteRole } from "./palette.js";
-import { type PrefillSnapshot, formatPrefillRows } from "./prefill.js";
+import { formatPrefillRows, type PrefillSnapshot } from "./prefill.js";
 import {
 	EMPTY_RUN_ACTIVITY,
 	formatDuration,
@@ -29,7 +29,12 @@ import {
 	type SidebarPanelRole,
 	sanitizeSidebarPanelText,
 } from "./sidebar-panels.js";
-import { createSplitPaneController, type SplitPaneController } from "./split-pane.js";
+import {
+	createSplitPaneController,
+	type SidebarMode,
+	type SidebarStatus,
+	type SplitPaneController,
+} from "./split-pane.js";
 import type { SubagentActivityItem, SubagentActivitySnapshot } from "./subagent-activity.js";
 import { subagentCostChart } from "./subagent-cost-chart.js";
 import {
@@ -295,6 +300,7 @@ function labeledRow(
 
 function agentRows(
 	snapshot: SidebarSnapshot,
+	config: AtelierConfig,
 	width: number,
 	palette: AtelierPalette,
 	theme: ThemeLike,
@@ -302,7 +308,7 @@ function agentRows(
 	const compact = width <= COMPACT_SIDEBAR_MAX_WIDTH - 6;
 	const activity = `${snapshot.activity.slice(0, 1).toUpperCase()}${snapshot.activity.slice(1)}`;
 	const workingLabel =
-		snapshot.activity === "working" && snapshot.workingLabel
+		snapshot.activity === "working" && !config.hideWorkingLabel && snapshot.workingLabel
 			? sanitize(snapshot.workingLabel).toLowerCase()
 			: "";
 	const activityText = workingLabel ? `${activity} · ${workingLabel}` : activity;
@@ -924,9 +930,23 @@ function contributedRichNodes(
 					node.spans.map((span) => paintRich(palette, span.color, span.role, fallback, span.text)).join(""),
 				];
 			case "keyValue": {
-				const width = Math.min(16, Math.max(1, visibleWidth(node.label)));
-				const label = padToWidth(palette.paint(node.labelRole ?? "muted", node.label), width);
-				return [`${label} ${paintRich(palette, node.valueColor, node.valueRole, fallback, node.value)}`];
+				const labelWidth = Math.min(16, Math.max(1, visibleWidth(node.label)));
+				const label = padToWidth(palette.paint(node.labelRole ?? "muted", node.label), labelWidth);
+				const valueWidth = Math.min(visibleWidth(node.value), Math.max(0, contentWidth - labelWidth - 1));
+				const safeValue = truncateToWidth(node.value, valueWidth, "…");
+				const value = paintRich(palette, node.valueColor, node.valueRole, fallback, safeValue);
+				const meterWidth = contentWidth - labelWidth - visibleWidth(safeValue) - 2;
+				if (node.progress !== undefined && meterWidth >= 4) {
+					const meter = subcellMeter(
+						node.progress * 100,
+						meterWidth,
+						node.valueRole ?? fallback,
+						palette,
+						palette.colorEnabled === true,
+					);
+					return [truncateToWidth(`${label} ${meter} ${value}`, contentWidth, "")];
+				}
+				return [truncateToWidth(`${label} ${value}`, contentWidth, "")];
 			}
 			case "heading":
 				return [palette.paint(node.role ?? "accent", node.text)];
@@ -1421,7 +1441,7 @@ export function renderSidebarFrame(
 				snapshot.activity === "working" && Math.floor(now / SIDEBAR_DYNAMIC_RENDER_INTERVAL_MS) % 2 === 1
 					? "✧"
 					: "✦",
-			rows: agentRows(snapshot, panelContentWidth, palette, theme),
+			rows: agentRows(snapshot, config, panelContentWidth, palette, theme),
 			required: true,
 			dropRank: Number.POSITIVE_INFINITY,
 		},
@@ -1729,6 +1749,8 @@ export function createSidebarComponent(options: SidebarComponentOptions): Compon
 
 export interface SidebarController {
 	show(): void;
+	setMode(mode: SidebarMode): void;
+	getStatus(): SidebarStatus;
 	hide(): void;
 	toggle(): void;
 	isVisible(): boolean;
@@ -1862,6 +1884,7 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 		...(typeof options.ctx.ui.onTerminalInput === "function"
 			? { subscribeInput: (handler) => options.ctx.ui.onTerminalInput(handler) }
 			: {}),
+		onVisibilityChange: () => syncAnimation(),
 		onResizeChange: () => {
 			renderRevision += 1;
 			safely(() => requestOverlayRender?.());
@@ -1887,7 +1910,12 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 	};
 
 	const syncAnimation = () => {
-		if (!enabled || options.shouldAnimate?.() !== true || !requestOverlayRender) {
+		if (
+			!enabled ||
+			split.getStatus().presentation !== "shown" ||
+			options.shouldAnimate?.() !== true ||
+			!requestOverlayRender
+		) {
 			stopAnimation();
 			return;
 		}
@@ -2020,14 +2048,19 @@ export function createSidebarController(options: SidebarControllerOptions): Side
 	};
 
 	return {
-		show,
+		show: () => show(),
+		setMode(mode) {
+			safely(() => split.setMode(mode));
+			syncAnimation();
+		},
+		getStatus: split.getStatus,
 		hide,
 		toggle() {
 			if (enabled) hide();
 			else show();
 		},
 		isVisible() {
-			return enabled;
+			return enabled && split.getStatus().presentation === "shown";
 		},
 		beginResize: split.beginResize,
 		isResizing: split.isResizing,

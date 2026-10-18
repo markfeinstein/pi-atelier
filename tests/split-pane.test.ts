@@ -420,18 +420,19 @@ describe("temporary Resize mode", () => {
 		expect(h.unsubscribe).toHaveBeenCalledOnce();
 		expect(h.split.isResizing()).toBe(false);
 	});
-	it("reclamps while resizing and exits safely when terminal becomes too narrow", () => {
+	it("preserves preferred width while resizing and exits safely when terminal becomes too narrow", () => {
 		const h = resizeHarness();
 		h.split.setSidebarWidth(72);
 		h.split.beginResize();
-		expect(h.split.getSidebarWidth()).toBe(56);
+		expect(h.split.getSidebarWidth()).toBe(72);
 		(h.tui.terminal as { columns: number }).columns = 100;
 		h.split.overlayOptions().visible?.(100, 36);
-		expect(h.split.getSidebarWidth()).toBe(36);
+		expect(h.split.getSidebarWidth()).toBe(72);
 		(h.tui.terminal as { columns: number }).columns = 91;
 		h.split.overlayOptions().visible?.(91, 36);
 		expect(h.split.isResizing()).toBe(false);
-		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1002h\u001b[?1006h");
+		expect(h.split.getSidebarWidth()).toBe(72);
+		expect(h.write).toHaveBeenLastCalledWith("\u001b[?1006l\u001b[?1002l");
 	});
 });
 

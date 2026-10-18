@@ -24,6 +24,7 @@ import {
 	getDisplaySettingsViewportHeight,
 	type SidebarPanelSetting,
 } from "./settings-workspace.js";
+import type { SidebarMode, SidebarStatus } from "./split-pane.js";
 import type { AtelierRuntime } from "./state.js";
 import type { AtelierConfig } from "./types.js";
 
@@ -43,8 +44,17 @@ function isOverlayLifetimeActive(lifetime: OverlayLifetime | undefined): boolean
 	return lifetime?.isActive() ?? true;
 }
 
+export function sidebarStatusLabel(status: SidebarStatus): string {
+	const label = status.mode === "auto" ? "Auto" : "Manual";
+	if (!status.enabled) return `${label} · hidden`;
+	return status.presentation === "auto-collapsed" || status.presentation === "too-narrow"
+		? `${label} · hidden: narrow terminal`
+		: label;
+}
+
 export interface SidebarControls {
-	isVisible(): boolean;
+	getStatus(): SidebarStatus;
+	setMode(mode: SidebarMode): void;
 	toggle(): void;
 	isToolListExpanded(): boolean;
 	toggleToolList(): Promise<void>;
@@ -185,6 +195,21 @@ export function createMenuActions(
 				if (!isActive()) return;
 				notify(
 					`Completion notifications changed for this session but could not be saved: ${boundedError(error)}`,
+					"warning",
+				);
+			}
+		},
+		async setHideWorkingLabel(enabled: boolean): Promise<void> {
+			if (!isActive()) return;
+			runtime.setConfig({ ...runtime.getConfig(), hideWorkingLabel: enabled });
+			try {
+				await savePatch(userConfigPath, { hideWorkingLabel: enabled });
+				if (!isActive()) return;
+				notify(`Randomized working text ${enabled ? "hidden" : "shown"}`, "info");
+			} catch (error) {
+				if (!isActive()) return;
+				notify(
+					`Randomized working text changed for this session but could not be saved: ${boundedError(error)}`,
 					"warning",
 				);
 			}
@@ -411,7 +436,7 @@ export async function openAtelierControlCenter(
 				{
 					value: "controls",
 					label: "Controls",
-					description: `Session controls · Sidebar: ${sidebar.isVisible() ? "On" : "Off"}`,
+					description: `Session controls · Sidebar: ${sidebarStatusLabel(sidebar.getStatus())}`,
 				},
 				...(options.openUsage
 					? [
@@ -459,6 +484,11 @@ export async function openAtelierControlCenter(
 							description: "User preference",
 						},
 						{
+							value: "working-label",
+							label: `Hide randomized working text: ${runtime.getConfig().hideWorkingLabel ? "On" : "Off"}`,
+							description: "User preference; retains static WORKING and activity indicators",
+						},
+						{
 							value: "sidebar-tools",
 							label: `Sidebar tool list: ${sidebar.isToolListExpanded() ? "Expanded" : "Collapsed"}`,
 							description: "User preference",
@@ -502,6 +532,8 @@ export async function openAtelierControlCenter(
 					await actions.setShowSidebarOnStartup(!runtime.getConfig().showSidebarOnStartup);
 				else if (choice === "notifications")
 					await actions.setCompletionNotifications(!runtime.getConfig().completionNotifications);
+				else if (choice === "working-label")
+					await actions.setHideWorkingLabel(!runtime.getConfig().hideWorkingLabel);
 				else await sidebar.toggleToolList();
 			}
 		} else if (category === "controls") {
@@ -513,8 +545,8 @@ export async function openAtelierControlCenter(
 					[
 						{
 							value: "sidebar",
-							label: `Sidebar: ${sidebar.isVisible() ? "On" : "Off"}`,
-							description: "Session control; shown by default",
+							label: `Sidebar: ${sidebarStatusLabel(sidebar.getStatus())}`,
+							description: "Choose Auto or Manual; show or hide independently",
 						},
 						{
 							value: "model",
@@ -532,8 +564,21 @@ export async function openAtelierControlCenter(
 				);
 				if (!isOverlayLifetimeActive(lifetime)) return;
 				if (!choice || choice === "back") break;
-				if (choice === "sidebar") sidebar.toggle();
-				else if (choice === "tools") await showToolSettings(ctx, pi, actions.setTools, lifetime);
+				if (choice === "sidebar") {
+					const mode = await showSelection(
+						ctx,
+						"Sidebar mode",
+						[
+							{ value: "auto", label: "Auto", description: "Show when there is comfortable reading space" },
+							{ value: "manual", label: "Manual", description: "Adjust width manually" },
+							{ value: "toggle", label: sidebar.getStatus().enabled ? "Hide sidebar" : "Show sidebar" },
+							{ value: "back", label: "Back" },
+						],
+						lifetime,
+					);
+					if (mode === "auto" || mode === "manual") sidebar.setMode(mode);
+					else if (mode === "toggle") sidebar.toggle();
+				} else if (choice === "tools") await showToolSettings(ctx, pi, actions.setTools, lifetime);
 				else {
 					const selected = await showSelection(
 						ctx,
