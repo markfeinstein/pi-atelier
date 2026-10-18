@@ -173,11 +173,16 @@ function activityText(
 	workingDots: string,
 	compact: boolean,
 	nerdFont: boolean,
+	hideWorkingLabel: boolean,
 ): string {
 	const fallback = state.activity.toUpperCase();
-	const showWorkingLabel = state.activity === "working" && !compact && !!state.workingLabel;
-	const label = showWorkingLabel ? state.workingLabel! : fallback;
-	const dots = showWorkingLabel ? workingDots.padEnd(WORKING_DOT_FRAMES[0].length, " ") : "";
+	const expandedWorking = state.activity === "working" && !compact;
+	const showRandomizedLabel = expandedWorking && !hideWorkingLabel && !!state.workingLabel;
+	const label = showRandomizedLabel ? state.workingLabel! : fallback;
+	const dots =
+		expandedWorking && (hideWorkingLabel || showRandomizedLabel)
+			? workingDots.padEnd(WORKING_DOT_FRAMES[0].length, " ")
+			: "";
 	return palette.paint(state.activity, theme.bold(`${nerdFont ? "● " : ""}${sanitize(label)}${dots}`));
 }
 
@@ -221,8 +226,24 @@ function buildItems(
 			add({
 				id: "activity",
 				zone: "left",
-				full: activityText(state, palette, theme, workingDots, false, config.nerdFont),
-				compact: activityText(state, palette, theme, workingDots, true, config.nerdFont),
+				full: activityText(
+					state,
+					palette,
+					theme,
+					workingDots,
+					false,
+					config.nerdFont,
+					config.hideWorkingLabel,
+				),
+				compact: activityText(
+					state,
+					palette,
+					theme,
+					workingDots,
+					true,
+					config.nerdFont,
+					config.hideWorkingLabel,
+				),
 				dropRank: DROP.activity,
 				required: true,
 			});
@@ -639,6 +660,7 @@ export function createFooterComponent(options: FooterComponentOptions): AtelierF
 			workingDots,
 			false,
 			config.nerdFont,
+			config.hideWorkingLabel,
 		);
 		if (surface !== "telemetry")
 			syncAnimation(state.activity === "working" && !!state.workingLabel && line.includes(fullActivity));

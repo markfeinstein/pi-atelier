@@ -82,6 +82,8 @@ const PANEL_ROLE_VALUES = [
 	"dim",
 	"ready",
 	"working",
+	"success",
+	"caution",
 	"warning",
 	"error",
 	"input",
@@ -97,6 +99,16 @@ export type SidebarPanelRole = (typeof PANEL_ROLE_VALUES)[number];
 export interface SidebarPanelRow {
 	text: string;
 	role?: SidebarPanelRole;
+}
+
+/** Upstream-compatible responsive label/value row; plain rows remain the fallback. */
+export interface SidebarPanelKeyValueRow {
+	label: string;
+	value: string;
+	labelRole?: SidebarPanelRole;
+	valueRole?: SidebarPanelRole;
+	/** Optional finite fraction from 0 to 1, inclusive. Invalid values are ignored. */
+	progress?: number;
 }
 
 export interface SidebarTextNode {
@@ -120,6 +132,8 @@ export interface SidebarKeyValueNode {
 	labelRole?: SidebarPanelRole;
 	valueRole?: SidebarPanelRole;
 	valueColor?: `#${string}`;
+	/** Optional finite fraction from 0 to 1, inclusive. */
+	progress?: number;
 }
 export interface SidebarHeadingNode {
 	kind: "heading";
@@ -179,6 +193,8 @@ export interface SidebarPanelContribution {
 	title: string;
 	rows: readonly (string | SidebarPanelRow)[];
 	role?: SidebarPanelRole;
+	/** Upstream-compatible preferred representation, normalized into bounded rich nodes. */
+	keyValues?: readonly SidebarPanelKeyValueRow[];
 	rich?: SidebarPanelRichContent;
 	availability?: SidebarPanelAvailability;
 }
@@ -456,6 +472,13 @@ function sanitizeRichNode(value: unknown, budget: RichBudget): SidebarPanelNode 
 			const label = sanitizeRichText(value.label, budget);
 			const rawValue = sanitizeRichText(value.value, budget);
 			const valueColor = value.valueColor === undefined ? undefined : sanitizeRichColor(value.valueColor);
+			const progress =
+				typeof value.progress === "number" &&
+				Number.isFinite(value.progress) &&
+				value.progress >= 0 &&
+				value.progress <= 1
+					? value.progress
+					: undefined;
 			if (
 				label === undefined ||
 				rawValue === undefined ||
@@ -471,6 +494,7 @@ function sanitizeRichNode(value: unknown, budget: RichBudget): SidebarPanelNode 
 				...(labelRole ? { labelRole } : {}),
 				...(valueRole ? { valueRole } : {}),
 				...(valueColor ? { valueColor } : {}),
+				...(progress !== undefined ? { progress } : {}),
 			};
 		}
 		case "bar": {
@@ -582,6 +606,14 @@ function sanitizeAvailability(value: unknown): SidebarPanelAvailability | undefi
 	return { available: value.available, ...(reason ? { reason } : {}) };
 }
 
+function sanitizeCompatibilityKeyValues(value: unknown): SidebarPanelRichContent | undefined {
+	if (!Array.isArray(value) || value.length === 0 || value.length > SIDEBAR_PANEL_MAX_ROWS) return undefined;
+	return sanitizeSidebarPanelRich({
+		version: 1,
+		expanded: value.map((row) => (isRecord(row) ? { ...row, kind: "keyValue" } : row)),
+	});
+}
+
 function sanitizeContribution(value: unknown): SanitizedSidebarPanelContribution | undefined {
 	if (
 		!isRecord(value) ||
@@ -607,7 +639,7 @@ function sanitizeContribution(value: unknown): SanitizedSidebarPanelContribution
 			...(isRecord(row) && isSidebarPanelRole(row.role) ? { role: row.role } : {}),
 		});
 	}
-	const rich = sanitizeSidebarPanelRich(value.rich);
+	const rich = sanitizeSidebarPanelRich(value.rich) ?? sanitizeCompatibilityKeyValues(value.keyValues);
 	const availability = sanitizeAvailability(value.availability);
 	if (!availability) return undefined;
 	return {

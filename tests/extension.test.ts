@@ -345,7 +345,7 @@ describe("extension registration", () => {
 		await start(h);
 		await command(h, args);
 		expect(h.ctx.ui.notify).toHaveBeenCalledWith(
-			"Usage: /atelier sidebar [on|off|tools [on|off]|panel <id> [toggle|open|closed]]",
+			"Usage: /atelier sidebar [auto|manual|on|off|tools [on|off]|panel <id> [toggle|open|closed]]",
 			"warning",
 		);
 		expect(h.custom).toHaveBeenCalledOnce();
@@ -518,7 +518,7 @@ describe("extension registration", () => {
 		await h.mounted(1);
 		expect(h.overlays).toHaveLength(2);
 		const menu = renderOverlayText(h, 1, 80);
-		expect(menu).toContain("Sidebar: On");
+		expect(menu).toContain("Sidebar: Manual");
 		h.overlays[1]?.component.handleInput("\u001b");
 		await opening;
 	});

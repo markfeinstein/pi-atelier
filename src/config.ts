@@ -474,6 +474,7 @@ function applyNonDisplay(
 		"showSidebarToolNames",
 		"showSidebarOnStartup",
 		"completionNotifications",
+		"hideWorkingLabel",
 		"prefillEnabled",
 		"nerdFont",
 	] as const) {
@@ -482,11 +483,16 @@ function applyNonDisplay(
 				userLayer ||
 				(key !== "showSidebarOnStartup" &&
 					key !== "completionNotifications" &&
+					key !== "hideWorkingLabel" &&
 					key !== "prefillEnabled" &&
 					key !== "nerdFont")
 			)
 				config[key] = input[key];
 		} else if (key in input) warnings.push(`${key} must be boolean`);
+	}
+	if (userLayer && "showWorkingLabel" in input && !("hideWorkingLabel" in input)) {
+		if (typeof input.showWorkingLabel === "boolean") config.hideWorkingLabel = !input.showWorkingLabel;
+		else warnings.push("showWorkingLabel must be boolean");
 	}
 	if ("prefillViews" in input) {
 		if (!Array.isArray(input.prefillViews)) warnings.push("prefillViews must be an array");
@@ -625,6 +631,7 @@ export async function saveUserConfigPatch(
 				if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
 			}
 			const merged: Record<string, unknown> = { ...current, ...patch };
+			if (patch.hideWorkingLabel !== undefined) delete merged.showWorkingLabel;
 			// A shallow spread would drop the base and roles already on disk, so a patched `colorScheme`
 			// layers through the same rule configuration layering uses.
 			if (patch.colorScheme !== undefined)
